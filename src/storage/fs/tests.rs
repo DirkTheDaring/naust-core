@@ -1,5 +1,5 @@
 use super::test_helpers::{
-    make_test_stream, occupy_freed_inode, prepare_finalizable_session, tmp_fs_root, write_file,
+    detach_for_swap, make_test_stream, prepare_finalizable_session, tmp_fs_root, write_file,
 };
 use super::*;
 use crate::storage::StorageErrorKind;
@@ -13177,12 +13177,10 @@ mod tag_mutation_write_containment {
 
         // (2) Externally remove the whole repository namespace (its inode is now
         // detached). A cached-per-repo authority would still point at it.
-        std::fs::remove_dir_all(&repo_dir).unwrap();
-        let keeper = occupy_freed_inode(&root.join("repos"));
+        let _detached = detach_for_swap(&repo_dir);
 
         // (3) Another mutation for the same logical repository.
         storage.set_tag("delrepo", "t2", &d(HEX2)).await.unwrap();
-        std::fs::remove_dir_all(keeper).unwrap();
 
         // (4) It is visible through the newly named repository tree...
         let new_inode = std::fs::metadata(&repo_dir).unwrap().ino();
@@ -13507,11 +13505,10 @@ mod manifest_write_containment {
             .unwrap()
             .ino();
 
-        // Remove and recreate the repository directory at the same pathname.
-        std::fs::remove_dir_all(root.join("repos").join("delrepo")).unwrap();
-        let keeper = occupy_freed_inode(&root.join("repos"));
+        // Remove and recreate the repository directory at the same pathname
+        // (detached, not deleted: the old inode must stay occupied — ext4).
+        let _detached = detach_for_swap(&root.join("repos").join("delrepo"));
         std::fs::create_dir_all(root.join("repos").join("delrepo")).unwrap();
-        std::fs::remove_dir_all(keeper).unwrap();
         let second_inode = std::fs::metadata(root.join("repos").join("delrepo"))
             .unwrap()
             .ino();
@@ -13964,14 +13961,8 @@ mod referrer_write_containment {
             .unwrap()
             .ino();
 
-        std::fs::remove_dir_all(root.join("repos").join("delrepo")).unwrap();
-        let ext4_keeper = occupy_freed_inode(
-            std::path::Path::new(&root.join("repos").join("delrepo"))
-                .parent()
-                .unwrap(),
-        );
+        let _detached = detach_for_swap(&root.join("repos").join("delrepo"));
         std::fs::create_dir_all(root.join("repos").join("delrepo")).unwrap();
-        std::fs::remove_dir_all(ext4_keeper).unwrap();
         let second_inode = std::fs::metadata(root.join("repos").join("delrepo"))
             .unwrap()
             .ino();
@@ -14509,12 +14500,10 @@ mod membership_mutation_containment {
             .join("by-repo")
             .join(encode_canonical_repo_key(&canonical("delrepo")));
         let first_inode = std::fs::metadata(&key_dir).unwrap().ino();
-        std::fs::remove_dir_all(&key_dir).unwrap();
-        let keeper = occupy_freed_inode(key_dir.parent().unwrap());
+        let _detached = detach_for_swap(&key_dir);
 
         // Recreate via the production link path; new inode.
         let mut rec = link(&storage, "delrepo", &digest).await;
-        std::fs::remove_dir_all(keeper).unwrap();
         assert_ne!(
             std::fs::metadata(&key_dir).unwrap().ino(),
             first_inode,
@@ -15926,10 +15915,8 @@ mod gc_quarantine_containment {
         storage.set_quarantine_boundary_hook(Arc::new(move |hex| {
             assert_eq!(hex, hook_digest.hex());
             let leaf = cas_path(&hook_root, &hook_digest);
-            std::fs::remove_file(&leaf).unwrap();
-            let keeper = occupy_freed_inode(leaf.parent().unwrap());
+            let _detached = detach_for_swap(&leaf);
             std::fs::write(&leaf, replacement).unwrap();
-            std::fs::remove_dir_all(keeper).unwrap();
             set_mtime_secs(&leaf, 1_700_000_555);
             fired_hook.store(true, std::sync::atomic::Ordering::SeqCst);
         }));
