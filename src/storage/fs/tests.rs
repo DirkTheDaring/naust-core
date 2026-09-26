@@ -13178,9 +13178,11 @@ mod tag_mutation_write_containment {
         // (2) Externally remove the whole repository namespace (its inode is now
         // detached). A cached-per-repo authority would still point at it.
         std::fs::remove_dir_all(&repo_dir).unwrap();
+        let keeper = occupy_freed_inode(&root.join("repos"));
 
         // (3) Another mutation for the same logical repository.
         storage.set_tag("delrepo", "t2", &d(HEX2)).await.unwrap();
+        std::fs::remove_file(keeper).unwrap();
 
         // (4) It is visible through the newly named repository tree...
         let new_inode = std::fs::metadata(&repo_dir).unwrap().ino();
