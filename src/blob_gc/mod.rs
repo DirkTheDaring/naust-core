@@ -229,6 +229,7 @@ pub async fn blob_gc_quarantine_with_authority(
         return Err(BlobGcError::AuthorityReleased);
     }
 
+    let mut policy_ctx = PolicyContext::build(storage, idx, policy).await?;
     let mut stats = BlobGcStats::default();
 
     let t0 = Instant::now();
@@ -262,8 +263,6 @@ pub async fn blob_gc_quarantine_with_authority(
             let permit = authority.gc_mutation_permit();
 
             let _reval_guard = consistency.acquire_gc_revalidation().await;
-
-            let mut policy_ctx = PolicyContext::build(storage, idx, policy).await?;
 
             if policy_ctx.is_pinned(&candidate.digest, now)? {
                 drop(_reval_guard);
@@ -397,6 +396,7 @@ async fn blob_gc_delete_fs_with_authority(
 ) -> Result<BlobGcStats, BlobGcError> {
     use storage_fs::{DirEntryType, FileName, FsMutateError};
 
+    let mut policy_ctx = PolicyContext::build(storage, idx, policy).await?;
     let mut stats = BlobGcStats::default();
 
     let t0 = Instant::now();
@@ -563,8 +563,6 @@ async fn blob_gc_delete_fs_with_authority(
 
             let reval_guard = consistency.acquire_gc_revalidation().await;
 
-            let mut policy_ctx = PolicyContext::build(storage, idx, policy).await?;
-
             if policy_ctx.is_pinned(&digest, now)? {
                 drop(reval_guard);
                 continue;
@@ -660,6 +658,7 @@ async fn blob_gc_delete_s3_with_authority(
         .await
         .map_err(BlobGcError::BucketVersioning)?;
 
+    let mut policy_ctx = PolicyContext::build(storage, idx, policy).await?;
     let mut stats = BlobGcStats::default();
 
     let t0 = Instant::now();
@@ -693,8 +692,6 @@ async fn blob_gc_delete_s3_with_authority(
             let permit = authority.gc_mutation_permit();
 
             let reval_guard = consistency.acquire_gc_revalidation().await;
-
-            let mut policy_ctx = PolicyContext::build(storage, idx, policy).await?;
 
             if policy_ctx.is_pinned(&candidate.digest, now)? {
                 drop(reval_guard);

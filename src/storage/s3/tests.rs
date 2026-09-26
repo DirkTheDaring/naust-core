@@ -2821,6 +2821,218 @@ async fn test_s3_migration_interrupted_apply_and_cursor_resume() {
 }
 
 #[tokio::test]
+async fn test_s3_membership_migration_multiarch_manifest_list_traversal() {
+    use crate::storage::Storage;
+    let (storage, _driver) = create_mock_storage();
+    let storage_arc = Arc::new(storage);
+    let repo = "s3-multi-arch-repo";
+
+    let blob_digest = |data: &[u8]| {
+        use sha2::Digest as _;
+        let hash = sha2::Sha256::digest(data);
+        Digest::parse(&format!("sha256:{}", hex::encode(hash))).unwrap()
+    };
+    let config_amd64 = blob_digest(b"cfg_amd64");
+    let layer_amd64 = blob_digest(b"layer_amd64");
+    let config_arm64 = blob_digest(b"cfg_arm64");
+    let layer_arm64 = blob_digest(b"layer_arm64");
+
+    for (d, b) in [
+        (&config_amd64, b"cfg_amd64" as &[u8]),
+        (&layer_amd64, b"layer_amd64"),
+        (&config_arm64, b"cfg_arm64"),
+        (&layer_arm64, b"layer_arm64"),
+    ] {
+        let up = storage_arc.create_upload().await.unwrap();
+        storage_arc
+            .append_upload(&up.uuid, Bytes::copy_from_slice(b))
+            .await
+            .unwrap();
+        storage_arc.finalize_upload(&up.uuid, d).await.unwrap();
+    }
+
+    let manifest_amd64_bytes = Bytes::from(format!(
+        r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{{"digest":"{}","size":9}},"layers":[{{"digest":"{}","size":11}}]}}"#,
+        config_amd64.as_str(),
+        layer_amd64.as_str()
+    ));
+    let digest_amd64 = blob_digest(&manifest_amd64_bytes);
+    storage_arc
+        .put_manifest(repo, &digest_amd64, manifest_amd64_bytes)
+        .await
+        .unwrap();
+
+    let manifest_arm64_bytes = Bytes::from(format!(
+        r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{{"digest":"{}","size":9}},"layers":[{{"digest":"{}","size":11}}]}}"#,
+        config_arm64.as_str(),
+        layer_arm64.as_str()
+    ));
+    let digest_arm64 = blob_digest(&manifest_arm64_bytes);
+    storage_arc
+        .put_manifest(repo, &digest_arm64, manifest_arm64_bytes)
+        .await
+        .unwrap();
+
+    let index_bytes = Bytes::from(format!(
+        r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"{}","size":100}},{{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"{}","size":100}}]}}"#,
+        digest_amd64.as_str(),
+        digest_arm64.as_str()
+    ));
+    let digest_index = blob_digest(&index_bytes);
+    storage_arc
+        .put_manifest(repo, &digest_index, index_bytes)
+        .await
+        .unwrap();
+
+    storage_arc.set_tag(repo, "latest", &digest_index).await.unwrap();
+
+    let plan_stats = crate::membership_migration::plan_membership_migration(&storage_arc).await.unwrap();
+    assert_eq!(plan_stats.manifests_scanned, 3);
+    assert_eq!(plan_stats.memberships_created, 4);
+
+    let apply_stats = crate::membership_migration::apply_membership_migration(&storage_arc).await.unwrap();
+    assert_eq!(apply_stats.manifests_scanned, 3);
+    assert_eq!(apply_stats.memberships_created, 4);
+
+    let verified = crate::membership_migration::verify_membership_migration(&storage_arc).await.unwrap();
+    assert!(verified, "membership verification must pass for multi-arch manifest lists on S3");
+
+    for blob in [&config_amd64, &layer_amd64, &config_arm64, &layer_arm64] {
+        assert!(
+            storage_arc
+                .get_repo_blob_membership(repo, blob)
+                .await
+                .unwrap()
+                .is_some(),
+            "blob {blob} must have repo membership on S3"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_s3_manifest_lifecycle_delete_manifest_and_coordination() {
+    use crate::consistency::ConsistencyCoordinator;
+    use crate::manifest_lifecycle::{ManifestLifecycleService, PublishManifestRequest};
+    use crate::storage::Storage;
+
+    let (storage, _driver) = create_mock_storage();
+    let storage_arc = Arc::new(storage);
+    let coordinator = ConsistencyCoordinator::new();
+    let service = ManifestLifecycleService::new(storage_arc.clone(), None, coordinator);
+    let repo = "s3-lifecycle-repo";
+
+    let cfg_payload = b"{}";
+    use sha2::Digest as _;
+    let cfg_digest = Digest::parse(&format!(
+        "sha256:{}",
+        hex::encode(sha2::Sha256::digest(cfg_payload))
+    ))
+    .unwrap();
+
+    let up = storage_arc.create_upload().await.unwrap();
+    storage_arc
+        .append_upload(&up.uuid, Bytes::from_static(cfg_payload))
+        .await
+        .unwrap();
+    storage_arc
+        .finalize_upload(&up.uuid, &cfg_digest)
+        .await
+        .unwrap();
+
+    let manifest_bytes = Bytes::from(format!(
+        r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{{"digest":"{}","size":{}}},"layers":[]}}"#,
+        cfg_digest.as_str(),
+        cfg_payload.len()
+    ));
+    let digest = Digest::parse(&format!(
+        "sha256:{}",
+        hex::encode(sha2::Sha256::digest(&manifest_bytes))
+    ))
+    .unwrap();
+
+    // 1. Publish manifest with tag "latest"
+    let req = PublishManifestRequest::new(
+        repo,
+        "latest",
+        manifest_bytes.clone(),
+        Some("application/vnd.oci.image.manifest.v1+json".to_string()),
+        true,
+    );
+    let pub_res = service.publish(req).await.expect("publish manifest on S3");
+    assert_eq!(pub_res.digest, digest);
+
+    // Verify tag and manifest exist on S3
+    assert_eq!(
+        storage_arc.resolve_tag(repo, "latest").await.unwrap(),
+        digest
+    );
+    assert!(storage_arc.head_manifest(repo, &digest).await.is_ok());
+
+    // 2. Delete manifest through lifecycle service on S3
+    let del_res = service
+        .delete_manifest(repo, &digest)
+        .await
+        .expect("delete manifest on S3");
+    assert_eq!(del_res.digest, digest);
+    assert_eq!(del_res.removed_tags, vec!["latest"]);
+
+    // Verify manifest and tag are deleted from S3
+    assert!(storage_arc.resolve_tag(repo, "latest").await.is_err());
+    assert!(storage_arc.head_manifest(repo, &digest).await.is_err());
+
+    // Verify lifecycle journal is deleted from S3
+    assert!(storage_arc
+        .read_lifecycle_journal(repo)
+        .await
+        .unwrap()
+        .is_none());
+
+    // Verify lease was released on S3 (new coordination can be acquired immediately)
+    let coord = service.acquire_coordination(repo).await;
+    assert!(coord.is_ok(), "S3 repo lease must be cleanly released");
+}
+
+#[tokio::test]
+async fn test_s3_acquire_coordination_does_not_block_unrelated_repo_during_lease_backoff() {
+    use crate::consistency::ConsistencyCoordinator;
+    use crate::manifest_lifecycle::ManifestLifecycleService;
+    use crate::storage::Storage;
+
+    let (storage, _driver) = create_mock_storage();
+    let storage_arc = Arc::new(storage);
+    let coordinator = ConsistencyCoordinator::new();
+    let service = ManifestLifecycleService::new(storage_arc.clone(), None, coordinator);
+
+    // Pre-acquire lease on repo-a in S3
+    storage_arc
+        .acquire_repo_lease("repo-a", "other-owner", "other-lease", 60)
+        .await
+        .unwrap();
+
+    // Spawn task attempting to acquire coordination on repo-a (will loop with backoff on S3)
+    let service_clone = service.clone();
+    let task_a = tokio::spawn(async move {
+        service_clone.acquire_coordination("repo-a").await
+    });
+
+    // Small yield so task_a enters the retry loop for repo-a
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    // Coordination on repo-b MUST succeed immediately on S3 without waiting for repo-a backoff
+    let start = std::time::Instant::now();
+    let guard_b = service.acquire_coordination("repo-b").await;
+    let elapsed = start.elapsed();
+
+    assert!(guard_b.is_ok(), "repo-b coordination must succeed on S3");
+    assert!(
+        elapsed < std::time::Duration::from_millis(300),
+        "repo-b must not be blocked by repo-a lease retry backoff on S3, took {elapsed:?}"
+    );
+
+    task_a.abort();
+}
+
+#[tokio::test]
 async fn test_s3_no_normal_membership_op_reads_or_deletes_legacy_markers() {
     let (storage, driver) = create_mock_storage();
     let digest =

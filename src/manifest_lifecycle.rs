@@ -386,8 +386,6 @@ impl ManifestLifecycleService {
         &self,
         repo: &str,
     ) -> Result<RepoCoordinationGuard, ManifestLifecycleError> {
-        let guard = self.consistency.acquire_mutation().await;
-
         let owner_id = uuid::Uuid::new_v4().to_string();
         let lease_id = uuid::Uuid::new_v4().to_string();
 
@@ -412,6 +410,40 @@ impl ManifestLifecycleService {
         if !acquired {
             return Err(ManifestLifecycleError::CoordinationLeaseHeld);
         }
+
+        struct LeaseReleaser {
+            storage: Arc<dyn crate::storage::ManifestLifecycleStoragePort>,
+            repo: String,
+            owner_id: String,
+            lease_id: String,
+            active: bool,
+        }
+        impl Drop for LeaseReleaser {
+            fn drop(&mut self) {
+                if self.active {
+                    let storage = Arc::clone(&self.storage);
+                    let repo = self.repo.clone();
+                    let owner_id = self.owner_id.clone();
+                    let lease_id = self.lease_id.clone();
+                    tokio::spawn(async move {
+                        let _ = storage
+                            .release_repo_lease(&repo, &owner_id, &lease_id)
+                            .await;
+                    });
+                }
+            }
+        }
+
+        let mut releaser = LeaseReleaser {
+            storage: Arc::clone(&self.storage),
+            repo: repo.to_string(),
+            owner_id: owner_id.clone(),
+            lease_id: lease_id.clone(),
+            active: true,
+        };
+
+        let guard = self.consistency.acquire_mutation().await;
+        releaser.active = false;
 
         let (failure_tx, failure_rx) = tokio::sync::mpsc::channel(1);
         let storage_clone = Arc::clone(&self.storage);
@@ -506,6 +538,23 @@ impl ManifestLifecycleService {
             .delete_lifecycle_journal(repo)
             .await
             .map_err(ManifestLifecycleError::Storage)
+    }
+
+    async fn abort_delete_manifest_precondition_failed(
+        &self,
+        repo: &str,
+        removed_tags: &[String],
+        guard: &mut RepoCoordinationGuard,
+    ) -> Result<ManifestLifecycleError, ManifestLifecycleError> {
+        self.delete_journal(repo).await?;
+        if let Some(idx) = self.ref_index.as_ref() {
+            for tag in removed_tags {
+                let _ = idx.on_tag_deleted(repo, tag);
+            }
+            let _ = idx.mark_ready();
+        }
+        let _ = guard.release().await;
+        Ok(ManifestLifecycleError::TagPreconditionFailed)
     }
 
     pub async fn recover_and_ensure_index_healthy(
@@ -1464,7 +1513,13 @@ impl ManifestLifecycleService {
                                         Some((new_target, new_version)) => {
                                             if new_target.as_str() == digest_str {
                                                 if attempts > 3 {
-                                                    return Err(ManifestLifecycleError::TagPreconditionFailed);
+                                                    return Err(self
+                                                        .abort_delete_manifest_precondition_failed(
+                                                            repo,
+                                                            &removed_tags,
+                                                            &mut guard,
+                                                        )
+                                                        .await?);
                                                 }
                                                 journal.relevant_tags[i].observed_version =
                                                     new_version;
@@ -1507,7 +1562,13 @@ impl ManifestLifecycleService {
                 .await?;
             for (t, d) in page {
                 if d.as_str() == digest_str {
-                    return Err(ManifestLifecycleError::TagPreconditionFailed);
+                    return Err(self
+                        .abort_delete_manifest_precondition_failed(
+                            repo,
+                            &removed_tags,
+                            &mut guard,
+                        )
+                        .await?);
                 }
                 let _ = t;
             }
@@ -1738,6 +1799,7 @@ mod tests {
         /// cleanup branch now that the coherent tag path cannot produce a
         /// spurious precondition failure outside a true concurrent race.
         force_tag_precondition_failed: AtomicBool,
+        force_persistent_tag_precondition_failed: AtomicBool,
     }
 
     #[async_trait::async_trait]
@@ -1908,9 +1970,8 @@ mod tests {
             tag: &str,
             expected_version: Option<&str>,
         ) -> Result<crate::storage::ConditionalDeleteResult, StorageError> {
-            if self
-                .force_tag_precondition_failed
-                .swap(false, Ordering::SeqCst)
+            if self.force_persistent_tag_precondition_failed.load(Ordering::SeqCst)
+                || self.force_tag_precondition_failed.swap(false, Ordering::SeqCst)
             {
                 return Ok(
                     crate::storage::ConditionalDeleteResult::PreconditionFailed {
@@ -2075,6 +2136,7 @@ mod tests {
             immediate_cycle: AtomicBool::new(false),
             multi_cycle: AtomicBool::new(false),
             force_tag_precondition_failed: AtomicBool::new(false),
+            force_persistent_tag_precondition_failed: AtomicBool::new(false),
         });
         let coordinator = ConsistencyCoordinator::new();
         let service = ManifestLifecycleService::new(mock_storage.clone(), None, coordinator);
@@ -2317,5 +2379,126 @@ mod tests {
             .unwrap();
 
         assert!(!res);
+    }
+
+    /// Deterministic coverage of the delete_manifest TagPreconditionFailed cleanup branch:
+    /// when tag conditional deletion fails repeatedly due to concurrent updates or conflicts,
+    /// delete_manifest must clean up the lifecycle journal and leave the reference index
+    /// in the READY state rather than abandoning a dirty journal that would trigger
+    /// unintended deletions during subsequent recovery.
+    #[tokio::test]
+    async fn test_delete_manifest_precondition_failed_cleanup_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let fs_root = dir.path().join("data");
+        std::fs::create_dir_all(&fs_root).unwrap();
+        let ref_path = dir.path().join("ref-index");
+        let ref_index = Arc::new(BlobRefIndex::open(ref_path).unwrap());
+
+        let fs_storage = Arc::new(FsStorage::new(fs_root, 50 * 1024 * 1024));
+        let mock_storage = Arc::new(TestLifecycleMockStorage {
+            inner: fs_storage,
+            fail_listing: AtomicBool::new(false),
+            fail_get_manifest: AtomicBool::new(false),
+            corrupt_manifest: AtomicBool::new(false),
+            immediate_cycle: AtomicBool::new(false),
+            multi_cycle: AtomicBool::new(false),
+            force_tag_precondition_failed: AtomicBool::new(false),
+            force_persistent_tag_precondition_failed: AtomicBool::new(false),
+        });
+        let coordinator = ConsistencyCoordinator::new();
+        let service = ManifestLifecycleService::new(
+            mock_storage.clone(),
+            Some(ref_index.clone()),
+            coordinator,
+        );
+
+        let repo = "cleanup-manifest-repo";
+        let cfg_digest = test_digest("11");
+        let target_blob = test_digest("99");
+        let manifest_bytes = Bytes::from(format!(
+            r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{{"digest":"{}","size":2}},"layers":[{{"digest":"{}","size":10}}]}}"#,
+            cfg_digest.as_str(),
+            target_blob.as_str()
+        ));
+        let m_d = test_digest("cleanup_manifest");
+        mock_storage
+            .inner
+            .put_manifest(repo, &m_d, manifest_bytes)
+            .await
+            .unwrap();
+        mock_storage.inner.set_tag(repo, "latest", &m_d).await.unwrap();
+
+        // Inject persistent tag precondition failure for all retries
+        mock_storage
+            .force_persistent_tag_precondition_failed
+            .store(true, Ordering::SeqCst);
+        let res = service.delete_manifest(repo, &m_d).await;
+        assert!(
+            matches!(res, Err(ManifestLifecycleError::TagPreconditionFailed)),
+            "expected TagPreconditionFailed, got {res:?}"
+        );
+
+        // Verify journal is deleted so subsequent recovery does not delete the manifest
+        assert!(
+            mock_storage
+                .inner
+                .read_lifecycle_journal(repo)
+                .await
+                .unwrap()
+                .is_none(),
+            "journal must be deleted on TagPreconditionFailed cleanup"
+        );
+
+        // Verify index is healthy / ready
+        assert!(
+            ref_index.check_health().is_ok(),
+            "index must be marked ready on TagPreconditionFailed cleanup"
+        );
+
+        // Manifest and tag must still exist
+        assert!(
+            mock_storage.inner.head_manifest(repo, &m_d).await.is_ok(),
+            "manifest must remain intact"
+        );
+        assert_eq!(
+            mock_storage.inner.resolve_tag(repo, "latest").await.unwrap(),
+            m_d,
+            "tag must remain intact"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_acquire_coordination_does_not_block_unrelated_repo_during_lease_backoff() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mock, service) = setup_mock_service(&dir);
+
+        // Pre-acquire lease on repo-a so any new attempt will backoff
+        mock.inner
+            .acquire_repo_lease("repo-a", "other-owner", "other-lease", 60)
+            .await
+            .unwrap();
+
+        // Spawn task attempting to acquire coordination on repo-a (will loop with backoff)
+        let service_clone = service.clone();
+        let task_a = tokio::spawn(async move {
+            service_clone.acquire_coordination("repo-a").await
+        });
+
+        // Small yield so task_a enters the retry loop for repo-a
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // Coordination on repo-b MUST succeed immediately without waiting for repo-a backoff
+        let start = std::time::Instant::now();
+        let guard_b = service.acquire_coordination("repo-b").await;
+        let elapsed = start.elapsed();
+
+        assert!(guard_b.is_ok(), "repo-b coordination must succeed");
+        assert!(
+            elapsed < Duration::from_millis(300),
+            "repo-b must not be blocked by repo-a lease retry backoff, took {elapsed:?}"
+        );
+
+        // task_a was in its retry backoff loop without holding the mutation lock; abort it cleanly
+        task_a.abort();
     }
 }

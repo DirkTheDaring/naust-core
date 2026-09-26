@@ -1,8 +1,10 @@
 use crate::manifest_refs::parse_manifest_refs;
+use crate::registry::digest::Digest;
 pub use crate::storage::repo_membership::{
     MigrationCheckpointRecord, MigrationPhase, MigrationStats, RepoBlobMembershipRecord,
 };
 use crate::storage::{BlobRefIndexStoragePort, BlobUploadCoordinatorStoragePort, StorageError};
+use std::collections::{HashSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const LEASE_DURATION_SECS: u64 = 60;
@@ -31,19 +33,31 @@ pub async fn plan_membership_migration(
             Err(StorageError::NotFound) => Vec::new(),
             Err(e) => return Err(e),
         };
+        let mut visited_manifests: HashSet<Digest> = HashSet::new();
         for tag in tags {
             if let Ok(manifest_digest) = storage.resolve_tag(repo, &tag).await {
-                stats.manifests_scanned += 1;
-                let (_meta, bytes) = storage.get_manifest(repo, &manifest_digest).await?;
-                let refs = parse_manifest_refs(&bytes).map_err(|e| {
-                    StorageError::corrupt_data(format!(
-                        "corrupt manifest {manifest_digest} in repo {repo}: {e}"
-                    ))
-                })?;
-                for blob_d in refs.blob_references() {
-                    match storage.get_repo_blob_membership(repo, blob_d).await? {
-                        Some(_) => stats.memberships_already_present += 1,
-                        None => stats.memberships_created += 1,
+                let mut queue = VecDeque::new();
+                if visited_manifests.insert(manifest_digest.clone()) {
+                    queue.push_back(manifest_digest);
+                }
+                while let Some(current_digest) = queue.pop_front() {
+                    stats.manifests_scanned += 1;
+                    let (_meta, bytes) = storage.get_manifest(repo, &current_digest).await?;
+                    let refs = parse_manifest_refs(&bytes).map_err(|e| {
+                        StorageError::corrupt_data(format!(
+                            "corrupt manifest {current_digest} in repo {repo}: {e}"
+                        ))
+                    })?;
+                    for blob_d in refs.blob_references() {
+                        match storage.get_repo_blob_membership(repo, blob_d).await? {
+                            Some(_) => stats.memberships_already_present += 1,
+                            None => stats.memberships_created += 1,
+                        }
+                    }
+                    for child_manifest in refs.manifest_references() {
+                        if visited_manifests.insert(child_manifest.clone()) {
+                            queue.push_back(child_manifest.clone());
+                        }
                     }
                 }
             }
@@ -157,35 +171,82 @@ pub async fn apply_membership_migration(
                 return Err(e);
             }
         };
+        let mut visited_manifests: HashSet<Digest> = HashSet::new();
         for tag in tags {
             if let Ok(manifest_digest) = storage.resolve_tag(repo, &tag).await {
-                checkpoint.stats.manifests_scanned += 1;
-                let (_meta, bytes) = storage.get_manifest(repo, &manifest_digest).await?;
-                let refs = parse_manifest_refs(&bytes).map_err(|e| {
-                    checkpoint.phase = MigrationPhase::Failed;
-                    let mut err_msg = format!("corrupt manifest {manifest_digest} in {repo}: {e}");
-                    err_msg.truncate(512);
-                    checkpoint.failure_info = Some(err_msg);
-                    let _ = storage.save_migration_checkpoint(&checkpoint);
-                    StorageError::corrupt_data(format!(
-                        "corrupt manifest {manifest_digest} in repo {repo}: {e}"
-                    ))
-                })?;
-                for blob_d in refs.blob_references() {
-                    match storage.get_repo_blob_membership(repo, blob_d).await? {
-                        Some(_) => {
-                            checkpoint.stats.memberships_already_present += 1;
+                let mut queue = VecDeque::new();
+                if visited_manifests.insert(manifest_digest.clone()) {
+                    queue.push_back(manifest_digest);
+                }
+                while let Some(current_digest) = queue.pop_front() {
+                    checkpoint.stats.manifests_scanned += 1;
+                    let (_meta, bytes) = match storage.get_manifest(repo, &current_digest).await {
+                        Ok(res) => res,
+                        Err(e) => {
+                            checkpoint.phase = MigrationPhase::Failed;
+                            let mut err_msg =
+                                format!("failed reading manifest {current_digest} in {repo}: {e}");
+                            bound_utf8_diagnostic(&mut err_msg, 512);
+                            checkpoint.failure_info = Some(err_msg);
+                            if let Err(save_err) =
+                                storage.save_migration_checkpoint(&checkpoint).await
+                            {
+                                tracing::warn!(
+                                    repo = %repo,
+                                    manifest = %current_digest,
+                                    read_error = %e,
+                                    checkpoint_save_error = %save_err,
+                                    "failed to persist migration failure checkpoint"
+                                );
+                            }
+                            return Err(e);
                         }
-                        None => {
-                            let canonical_repo =
-                                crate::registry::canonical_name::CanonicalRepoName::parse(&repo)
-                                    .map_err(|e| StorageError::InvalidRepoName(e.to_string()))?;
-                            let record = RepoBlobMembershipRecord::new_migration(
-                                canonical_repo,
-                                blob_d.clone(),
-                            );
-                            storage.link_repo_blob(&record).await?;
-                            checkpoint.stats.memberships_created += 1;
+                    };
+                    let refs = match parse_manifest_refs(&bytes) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            checkpoint.phase = MigrationPhase::Failed;
+                            let mut err_msg =
+                                format!("corrupt manifest {current_digest} in {repo}: {e}");
+                            bound_utf8_diagnostic(&mut err_msg, 512);
+                            checkpoint.failure_info = Some(err_msg);
+                            if let Err(save_err) =
+                                storage.save_migration_checkpoint(&checkpoint).await
+                            {
+                                tracing::warn!(
+                                    repo = %repo,
+                                    manifest = %current_digest,
+                                    parse_error = %e,
+                                    checkpoint_save_error = %save_err,
+                                    "failed to persist migration failure checkpoint"
+                                );
+                            }
+                            return Err(StorageError::corrupt_data(format!(
+                                "corrupt manifest {current_digest} in repo {repo}: {e}"
+                            )));
+                        }
+                    };
+                    for blob_d in refs.blob_references() {
+                        match storage.get_repo_blob_membership(repo, blob_d).await? {
+                            Some(_) => {
+                                checkpoint.stats.memberships_already_present += 1;
+                            }
+                            None => {
+                                let canonical_repo =
+                                    crate::registry::canonical_name::CanonicalRepoName::parse(repo)
+                                        .map_err(|e| StorageError::InvalidRepoName(e.to_string()))?;
+                                let record = RepoBlobMembershipRecord::new_migration(
+                                    canonical_repo,
+                                    blob_d.clone(),
+                                );
+                                storage.link_repo_blob(&record).await?;
+                                checkpoint.stats.memberships_created += 1;
+                            }
+                        }
+                    }
+                    for child_manifest in refs.manifest_references() {
+                        if visited_manifests.insert(child_manifest.clone()) {
+                            queue.push_back(child_manifest.clone());
                         }
                     }
                 }
@@ -250,24 +311,45 @@ pub async fn verify_membership_migration(
             Err(StorageError::NotFound) => Vec::new(),
             Err(e) => return Err(e),
         };
+        let mut visited_manifests: HashSet<Digest> = HashSet::new();
         for tag in tags {
-            if let Ok(manifest_digest) = storage.resolve_tag(repo, &tag).await {
-                if let Ok((_meta, bytes)) = storage.get_manifest(repo, &manifest_digest).await {
-                    if let Ok(refs) = parse_manifest_refs(&bytes) {
-                        for blob_d in refs.blob_references() {
-                            let membership = storage.get_repo_blob_membership(repo, blob_d).await?;
-                            let Some(record) = membership else {
-                                return Ok(false);
-                            };
-                            // Verify repository and digest match
-                            if record.repo != *repo || record.digest != *blob_d {
-                                return Ok(false);
-                            }
-                            // Verify CAS blob exists globally
-                            if storage.head_blob(blob_d).await.is_err() {
-                                return Ok(false);
-                            }
-                        }
+            let manifest_digest = match storage.resolve_tag(repo, &tag).await {
+                Ok(d) => d,
+                Err(StorageError::NotFound) => continue,
+                Err(e) => return Err(e),
+            };
+            let mut queue = VecDeque::new();
+            if visited_manifests.insert(manifest_digest.clone()) {
+                queue.push_back(manifest_digest);
+            }
+            while let Some(current_digest) = queue.pop_front() {
+                let (_meta, bytes) = match storage.get_manifest(repo, &current_digest).await {
+                    Ok(m) => m,
+                    Err(StorageError::NotFound) => return Ok(false),
+                    Err(e) => return Err(e),
+                };
+                let refs = match parse_manifest_refs(&bytes) {
+                    Ok(r) => r,
+                    Err(_) => return Ok(false),
+                };
+                for blob_d in refs.blob_references() {
+                    let membership =
+                        storage.get_repo_blob_membership(repo, blob_d).await?;
+                    let Some(record) = membership else {
+                        return Ok(false);
+                    };
+                    // Verify repository and digest match
+                    if record.repo != *repo || record.digest != *blob_d {
+                        return Ok(false);
+                    }
+                    // Verify CAS blob exists globally
+                    if storage.head_blob(blob_d).await.is_err() {
+                        return Ok(false);
+                    }
+                }
+                for child_manifest in refs.manifest_references() {
+                    if visited_manifests.insert(child_manifest.clone()) {
+                        queue.push_back(child_manifest.clone());
                     }
                 }
             }
@@ -350,5 +432,162 @@ mod tests {
         let mut non_empty = String::from("hello");
         bound_utf8_diagnostic(&mut non_empty, 0);
         assert_eq!(non_empty, "");
+    }
+
+    fn test_sha256(data: &[u8]) -> Digest {
+        use sha2::Digest as _;
+        let hash = sha2::Sha256::digest(data);
+        Digest::parse(&format!("sha256:{}", hex::encode(hash))).unwrap()
+    }
+
+    async fn write_test_blob(storage: &crate::storage::fs::FsStorage, data: &[u8]) -> Digest {
+        use crate::storage::ports::BlobCasWriter;
+        let digest = test_sha256(data);
+        let up = storage.create_upload().await.unwrap();
+        storage
+            .append_upload(&up.uuid, bytes::Bytes::copy_from_slice(data))
+            .await
+            .unwrap();
+        storage.finalize_upload(&up.uuid, &digest).await.unwrap();
+        digest
+    }
+
+    #[tokio::test]
+    async fn test_membership_migration_multiarch_manifest_list_traversal() {
+        use crate::storage::fs::FsStorage;
+        use crate::storage::ports::{ManifestStore, TagStore};
+        use crate::storage::repo_membership::RepositoryBlobMembershipStorage;
+
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FsStorage::new(dir.path().to_path_buf(), 50 * 1024 * 1024);
+        let repo = "multi-arch-repo";
+
+        // 1. Create blobs for child manifests (config + layer for each arch)
+        let config_amd64 = write_test_blob(&storage, b"cfg_amd64").await;
+        let layer_amd64 = write_test_blob(&storage, b"layer_amd64").await;
+        let config_arm64 = write_test_blob(&storage, b"cfg_arm64").await;
+        let layer_arm64 = write_test_blob(&storage, b"layer_arm64").await;
+
+        // 2. Create child manifests
+        let manifest_amd64_bytes = bytes::Bytes::from(format!(
+            r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{{"digest":"{}","size":9}},"layers":[{{"digest":"{}","size":11}}]}}"#,
+            config_amd64.as_str(),
+            layer_amd64.as_str()
+        ));
+        let digest_amd64 = test_sha256(&manifest_amd64_bytes);
+        storage
+            .put_manifest(repo, &digest_amd64, manifest_amd64_bytes)
+            .await
+            .unwrap();
+
+        let manifest_arm64_bytes = bytes::Bytes::from(format!(
+            r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{{"digest":"{}","size":9}},"layers":[{{"digest":"{}","size":11}}]}}"#,
+            config_arm64.as_str(),
+            layer_arm64.as_str()
+        ));
+        let digest_arm64 = test_sha256(&manifest_arm64_bytes);
+        storage
+            .put_manifest(repo, &digest_arm64, manifest_arm64_bytes)
+            .await
+            .unwrap();
+
+        // 3. Create multi-arch OCI Image Index manifest
+        let index_bytes = bytes::Bytes::from(format!(
+            r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"{}","size":100}},{{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"{}","size":100}}]}}"#,
+            digest_amd64.as_str(),
+            digest_arm64.as_str()
+        ));
+        let digest_index = test_sha256(&index_bytes);
+        storage
+            .put_manifest(repo, &digest_index, index_bytes)
+            .await
+            .unwrap();
+
+        // 4. Tag points ONLY to the top-level multi-arch index
+        storage.set_tag(repo, "latest", &digest_index).await.unwrap();
+
+        // Plan: dry-run should discover all 3 manifests and 4 blob memberships
+        let plan_stats = plan_membership_migration(&storage).await.unwrap();
+        assert_eq!(plan_stats.manifests_scanned, 3);
+        assert_eq!(plan_stats.memberships_created, 4);
+        assert_eq!(plan_stats.memberships_already_present, 0);
+
+        // Apply: backfill memberships recursively
+        let apply_stats = apply_membership_migration(&storage).await.unwrap();
+        assert_eq!(apply_stats.manifests_scanned, 3);
+        assert_eq!(apply_stats.memberships_created, 4);
+
+        // Verify: verify_membership_migration should traverse all 3 manifests and verify all 4 blobs
+        let verified = verify_membership_migration(&storage).await.unwrap();
+        assert!(verified, "membership verification must pass for multi-arch manifest lists");
+
+        // Verify all 4 blobs have durable memberships
+        for blob in [&config_amd64, &layer_amd64, &config_arm64, &layer_arm64] {
+            assert!(
+                storage
+                    .get_repo_blob_membership(repo, blob)
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "blob {blob} must have repo membership"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_membership_migration_failure_checkpoint_persisted_on_corrupt_manifest() {
+        use crate::storage::fs::FsStorage;
+        use crate::storage::ports::{ManifestStore, TagStore};
+        use crate::storage::repo_membership::RepositoryBlobMembershipStorage;
+
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FsStorage::new(dir.path().to_path_buf(), 50 * 1024 * 1024);
+        let repo = "corrupt-repo";
+
+        let valid_manifest_bytes = bytes::Bytes::from(format!(
+            r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{{"digest":"{}","size":9}},"layers":[]}}"#,
+            test_sha256(b"dummy").as_str()
+        ));
+        let digest = test_sha256(&valid_manifest_bytes);
+        storage
+            .put_manifest(repo, &digest, valid_manifest_bytes)
+            .await
+            .unwrap();
+        storage.set_tag(repo, "latest", &digest).await.unwrap();
+
+        // Corrupt manifest on disk to trigger parse_manifest_refs failure
+        let manifest_path = dir
+            .path()
+            .join("repos")
+            .join(repo)
+            .join("manifests")
+            .join(digest.hex());
+        std::fs::write(
+            &manifest_path,
+            b"{\"schemaVersion\": 2, \"config\": \"invalid-config\"}",
+        )
+        .unwrap();
+
+        let res = apply_membership_migration(&storage).await;
+        assert!(res.is_err());
+
+        // Checkpoint must be persisted with MigrationPhase::Failed (verified via .await)
+        let checkpoint = storage
+            .get_migration_checkpoint()
+            .await
+            .unwrap()
+            .expect("failure checkpoint must be durably saved");
+        assert_eq!(checkpoint.phase, MigrationPhase::Failed);
+        assert!(checkpoint.failure_info.is_some());
+        assert!(checkpoint
+            .failure_info
+            .unwrap()
+            .contains("corrupt manifest"));
+
+        let verified = verify_membership_migration(&storage).await.unwrap();
+        assert!(
+            !verified,
+            "verify_membership_migration must fail when a manifest is corrupt"
+        );
     }
 }

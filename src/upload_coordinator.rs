@@ -262,12 +262,6 @@ impl PinLeaseGuard {
         let task_handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(renew_interval).await;
-                if let Err(e) = idx_clone.check_health() {
-                    let _ = failure_tx
-                        .send(map_ref_index_error_with_context(e, "pin renewal failed"))
-                        .await;
-                    break;
-                }
                 let refreshed_until = SystemTime::now() + Duration::from_secs(pin_ttl_secs);
                 if let Err(e) = idx_clone.acquire_pin(
                     &digest_clone,
@@ -2144,6 +2138,41 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(1500)).await;
 
         // Pin must still be active and extended by heartbeat
+        assert!(
+            ref_index
+                .is_blob_pinned(&digest, SystemTime::now())
+                .unwrap()
+        );
+
+        guard.stop().await;
+        guard.release_pin().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_pin_property_13_renewal_survives_dirty_index_during_finalization() {
+        let (_storage, ref_index, _coordinator, _tmp) = setup_test_coordinator().await;
+        let digest = Digest::parse(
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
+        .unwrap();
+        let op_id = "op-prop13-test";
+
+        // Initial pin TTL of 2 seconds (renewal interval = (2/3).max(1) = 1s)
+        let mut guard = PinLeaseGuard::acquire_and_start(Arc::clone(&ref_index), &digest, op_id, 2)
+            .await
+            .unwrap();
+
+        // Index is transitioned to DIRTY during Step 4 of finalization
+        ref_index.mark_dirty().unwrap();
+        assert!(ref_index.check_health().is_err());
+
+        // Wait 1.5 seconds (past one renewal interval while DIRTY)
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+
+        // No failure should have been transmitted over the failure channel
+        assert!(guard.failure_rx.try_recv().is_err());
+
+        // Blob pin should have been renewed successfully despite DIRTY state
         assert!(
             ref_index
                 .is_blob_pinned(&digest, SystemTime::now())

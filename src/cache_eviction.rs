@@ -48,12 +48,40 @@ pub fn plan_evictions(
     max_cache_bytes: u64,
 ) -> EvictionPlan {
     let total_bytes: u64 = candidates.iter().map(|c| c.size).sum();
-    let mut evictable: Vec<CacheBlobCandidate> = candidates
+    let evictable: Vec<CacheBlobCandidate> = candidates
         .into_iter()
-        .filter(|c| !protected_hex.contains(c.digest.hex()))
+        .filter(|c| {
+            !protected_hex.contains(c.digest.hex())
+                && !protected_hex.contains(&c.digest.as_str())
+        })
         .collect();
     let evictable_bytes: u64 = evictable.iter().map(|c| c.size).sum();
 
+    build_eviction_plan(evictable, total_bytes, evictable_bytes, max_cache_bytes)
+}
+
+/// Strongly typed proxy-cache eviction planning using canonical `Digest` identifiers.
+pub fn plan_evictions_typed(
+    candidates: Vec<CacheBlobCandidate>,
+    protected: &HashSet<Digest>,
+    max_cache_bytes: u64,
+) -> EvictionPlan {
+    let total_bytes: u64 = candidates.iter().map(|c| c.size).sum();
+    let evictable: Vec<CacheBlobCandidate> = candidates
+        .into_iter()
+        .filter(|c| !protected.contains(&c.digest))
+        .collect();
+    let evictable_bytes: u64 = evictable.iter().map(|c| c.size).sum();
+
+    build_eviction_plan(evictable, total_bytes, evictable_bytes, max_cache_bytes)
+}
+
+fn build_eviction_plan(
+    mut evictable: Vec<CacheBlobCandidate>,
+    total_bytes: u64,
+    evictable_bytes: u64,
+    max_cache_bytes: u64,
+) -> EvictionPlan {
     let mut plan = EvictionPlan {
         evict: Vec::new(),
         total_bytes,
@@ -146,5 +174,31 @@ mod tests {
         let plan = plan_evictions(candidates, &HashSet::new(), 0);
         let order: Vec<&str> = plan.evict.iter().map(|c| c.version.0.as_str()).collect();
         assert_eq!(order, vec!["v2", "v3", "v1"]);
+    }
+
+    #[test]
+    fn protected_blobs_with_canonical_sha256_prefix_are_never_evicted() {
+        // Protect candidate 1 using canonical "sha256:..." format rather than bare hex
+        let protected: HashSet<String> = [cand(1, 0, None, 0).digest.as_str().to_string()]
+            .into_iter()
+            .collect();
+        let candidates = vec![cand(1, 500, None, 1), cand(2, 100, None, 2)];
+        let plan = plan_evictions(candidates, &protected, 300);
+        assert_eq!(plan.evict.len(), 1);
+        assert_eq!(plan.evict[0].version.0, "v2");
+        assert_eq!(plan.planned_freed_bytes, 100);
+        assert_eq!(plan.residual_over_budget, 200);
+    }
+
+    #[test]
+    fn protected_blobs_strongly_typed_digest_set() {
+        // Strongly typed HashSet<Digest>
+        let protected: HashSet<Digest> = [cand(1, 0, None, 0).digest].into_iter().collect();
+        let candidates = vec![cand(1, 500, None, 1), cand(2, 100, None, 2)];
+        let plan = plan_evictions_typed(candidates, &protected, 300);
+        assert_eq!(plan.evict.len(), 1);
+        assert_eq!(plan.evict[0].version.0, "v2");
+        assert_eq!(plan.planned_freed_bytes, 100);
+        assert_eq!(plan.residual_over_budget, 200);
     }
 }
