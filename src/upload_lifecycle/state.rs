@@ -35,6 +35,10 @@ pub struct UploadStateData {
     pub iat: u64,
 }
 
+fn bound_repo_name(repo: &str) -> &str {
+    repo.trim().trim_matches('/')
+}
+
 impl UploadStateData {
     pub fn new(repo: impl Into<String>, uuid: impl Into<String>, offset: u64) -> Self {
         let now = SystemTime::now()
@@ -113,17 +117,9 @@ impl UploadStateData {
             return Err(StateTokenError::InvalidDomain);
         }
 
-        // 4. Verify repository binding
-        let norm_data_repo = data
-            .repo
-            .trim_start_matches('/')
-            .strip_prefix("library/")
-            .unwrap_or(&data.repo);
-        let norm_exp_repo = expected_repo
-            .trim_start_matches('/')
-            .strip_prefix("library/")
-            .unwrap_or(expected_repo);
-        if norm_data_repo != norm_exp_repo {
+        // 4. Verify repository binding. The stored name is the identity
+        // (ADR-016 in the naust server). `library/name` is not `name`.
+        if bound_repo_name(&data.repo) != bound_repo_name(expected_repo) {
             return Err(StateTokenError::RepoMismatch);
         }
 
@@ -249,6 +245,17 @@ mod tests {
         let token = state.encode_and_sign(key);
 
         let res = UploadStateData::verify_and_decode(&token, key, "library/repo-b");
+        assert_eq!(res, Err(StateTokenError::RepoMismatch));
+    }
+
+    #[test]
+    fn library_prefix_is_not_the_same_repository() {
+        let key = b"secret-key-12345";
+        let state =
+            UploadStateData::new("library/repo-a", "01234567-89ab-cdef-0123-456789abcdef", 0);
+        let token = state.encode_and_sign(key);
+
+        let res = UploadStateData::verify_and_decode(&token, key, "repo-a");
         assert_eq!(res, Err(StateTokenError::RepoMismatch));
     }
 
