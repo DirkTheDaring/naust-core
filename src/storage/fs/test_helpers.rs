@@ -69,7 +69,14 @@ pub async fn prepare_finalizable_session(
 /// inode with a keeper entry created in `parent`; callers remove the keeper
 /// once the real replacement exists.
 pub fn occupy_freed_inode(parent: &Path) -> PathBuf {
+    // A removed subtree frees SEVERAL inodes and ext4 hands them out
+    // lowest-first, so occupy a batch: a keeper directory with enough entries
+    // to cover any fixture subtree. Callers remove the returned path
+    // (recursively) once the real replacement exists.
     let keeper = parent.join(".inode-keeper");
-    std::fs::write(&keeper, b"inode keeper").unwrap();
+    std::fs::create_dir(&keeper).unwrap();
+    for i in 0..32 {
+        std::fs::write(keeper.join(format!("k{i}")), b"inode keeper").unwrap();
+    }
     keeper
 }

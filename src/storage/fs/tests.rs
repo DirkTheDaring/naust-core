@@ -13182,7 +13182,7 @@ mod tag_mutation_write_containment {
 
         // (3) Another mutation for the same logical repository.
         storage.set_tag("delrepo", "t2", &d(HEX2)).await.unwrap();
-        std::fs::remove_file(keeper).unwrap();
+        std::fs::remove_dir_all(keeper).unwrap();
 
         // (4) It is visible through the newly named repository tree...
         let new_inode = std::fs::metadata(&repo_dir).unwrap().ino();
@@ -13511,7 +13511,7 @@ mod manifest_write_containment {
         std::fs::remove_dir_all(root.join("repos").join("delrepo")).unwrap();
         let keeper = occupy_freed_inode(&root.join("repos"));
         std::fs::create_dir_all(root.join("repos").join("delrepo")).unwrap();
-        std::fs::remove_file(keeper).unwrap();
+        std::fs::remove_dir_all(keeper).unwrap();
         let second_inode = std::fs::metadata(root.join("repos").join("delrepo"))
             .unwrap()
             .ino();
@@ -13971,7 +13971,7 @@ mod referrer_write_containment {
                 .unwrap(),
         );
         std::fs::create_dir_all(root.join("repos").join("delrepo")).unwrap();
-        std::fs::remove_file(ext4_keeper).unwrap();
+        std::fs::remove_dir_all(ext4_keeper).unwrap();
         let second_inode = std::fs::metadata(root.join("repos").join("delrepo"))
             .unwrap()
             .ino();
@@ -14514,7 +14514,7 @@ mod membership_mutation_containment {
 
         // Recreate via the production link path; new inode.
         let mut rec = link(&storage, "delrepo", &digest).await;
-        std::fs::remove_file(keeper).unwrap();
+        std::fs::remove_dir_all(keeper).unwrap();
         assert_ne!(
             std::fs::metadata(&key_dir).unwrap().ino(),
             first_inode,
@@ -15929,7 +15929,7 @@ mod gc_quarantine_containment {
             std::fs::remove_file(&leaf).unwrap();
             let keeper = occupy_freed_inode(leaf.parent().unwrap());
             std::fs::write(&leaf, replacement).unwrap();
-            std::fs::remove_file(keeper).unwrap();
+            std::fs::remove_dir_all(keeper).unwrap();
             set_mtime_secs(&leaf, 1_700_000_555);
             fired_hook.store(true, std::sync::atomic::Ordering::SeqCst);
         }));
