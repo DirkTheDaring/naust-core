@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Stage sibling path dependency
+        run: git clone --depth 1 https://github.com/DirkTheDaring/storage-layer-rust ../storage-layer-rust
+      - name: Format
+        run: cargo fmt --check
+      - name: Tests
+        run: cargo test --locked --no-fail-fast
+      - name: Example (minimal registry over core alone)
+        run: cargo run --locked --example minimal_registry

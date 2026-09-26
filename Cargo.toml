@@ -1,0 +1,51 @@
+[package]
+name = "naust-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/DirkTheDaring/naust-core"
+description = "Registry-object primitives: blobs, manifests, tags, referrers, uploads, membership, GC, consistency. Transport-, auth-, and config-free (ADR-010)."
+
+# Explicitly unstable (0.x) until a second consumer exists — see ADR-010 §2.6.
+
+[dependencies]
+async-trait = "0.1"
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio", "credentials-process", "sso"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["behavior-version-latest", "default-https-client", "http-1x", "rt-tokio", "sigv4a"] }
+base64 = "0.22"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+fs2 = "0.4"
+futures-util = "0.3"
+hex = "0.4"
+hmac = "0.12"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = { version = "0.10", features = ["compress"] }
+sled = "0.34"
+thiserror = "2"
+time = { version = "0.3", features = ["formatting"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "fs", "io-util", "time"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+storage-core = { path = "../storage-layer-rust/crates/storage-core" }
+storage-fs = { path = "../storage-layer-rust/crates/storage-fs" }
+storage-s3 = { path = "../storage-layer-rust/crates/storage-s3" }
+
+[dev-dependencies]
+tempfile = "3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+# Enable the dependency's deterministic fault-injection seam for tests ONLY. With the
+# edition-2024 resolver, dev-dependency features are not unified into normal builds, so
+# production `FsStorage` never contains the seam.
+storage-fs = { path = "../storage-layer-rust/crates/storage-fs", features = ["fault-injection"] }
+# The deterministic in-memory S3 client mock drives the real S3ObjectStore adapter in
+# registry tag tests without an S3 endpoint. Dev-only; never unified into normal builds.
+storage-s3 = { path = "../storage-layer-rust/crates/storage-s3", features = ["mock-client"] }
+
+[features]
+# Expose deterministic test doubles (S3 mock driver, FS test helpers) to
+# downstream crates' TEST builds. Never enable in production dependencies.
+test-mocks = []
