@@ -51,8 +51,7 @@ pub fn plan_evictions(
     let evictable: Vec<CacheBlobCandidate> = candidates
         .into_iter()
         .filter(|c| {
-            !protected_hex.contains(c.digest.hex())
-                && !protected_hex.contains(&c.digest.as_str())
+            !protected_hex.contains(c.digest.hex()) && !protected_hex.contains(&c.digest.as_str())
         })
         .collect();
     let evictable_bytes: u64 = evictable.iter().map(|c| c.size).sum();

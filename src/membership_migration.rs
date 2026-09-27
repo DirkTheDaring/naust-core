@@ -234,7 +234,9 @@ pub async fn apply_membership_migration(
                             None => {
                                 let canonical_repo =
                                     crate::registry::canonical_name::CanonicalRepoName::parse(repo)
-                                        .map_err(|e| StorageError::InvalidRepoName(e.to_string()))?;
+                                        .map_err(|e| {
+                                            StorageError::InvalidRepoName(e.to_string())
+                                        })?;
                                 let record = RepoBlobMembershipRecord::new_migration(
                                     canonical_repo,
                                     blob_d.clone(),
@@ -333,8 +335,7 @@ pub async fn verify_membership_migration(
                     Err(_) => return Ok(false),
                 };
                 for blob_d in refs.blob_references() {
-                    let membership =
-                        storage.get_repo_blob_membership(repo, blob_d).await?;
+                    let membership = storage.get_repo_blob_membership(repo, blob_d).await?;
                     let Some(record) = membership else {
                         return Ok(false);
                     };
@@ -504,7 +505,10 @@ mod tests {
             .unwrap();
 
         // 4. Tag points ONLY to the top-level multi-arch index
-        storage.set_tag(repo, "latest", &digest_index).await.unwrap();
+        storage
+            .set_tag(repo, "latest", &digest_index)
+            .await
+            .unwrap();
 
         // Plan: dry-run should discover all 3 manifests and 4 blob memberships
         let plan_stats = plan_membership_migration(&storage).await.unwrap();
@@ -519,7 +523,10 @@ mod tests {
 
         // Verify: verify_membership_migration should traverse all 3 manifests and verify all 4 blobs
         let verified = verify_membership_migration(&storage).await.unwrap();
-        assert!(verified, "membership verification must pass for multi-arch manifest lists");
+        assert!(
+            verified,
+            "membership verification must pass for multi-arch manifest lists"
+        );
 
         // Verify all 4 blobs have durable memberships
         for blob in [&config_amd64, &layer_amd64, &config_arm64, &layer_arm64] {
@@ -579,10 +586,12 @@ mod tests {
             .expect("failure checkpoint must be durably saved");
         assert_eq!(checkpoint.phase, MigrationPhase::Failed);
         assert!(checkpoint.failure_info.is_some());
-        assert!(checkpoint
-            .failure_info
-            .unwrap()
-            .contains("corrupt manifest"));
+        assert!(
+            checkpoint
+                .failure_info
+                .unwrap()
+                .contains("corrupt manifest")
+        );
 
         let verified = verify_membership_migration(&storage).await.unwrap();
         assert!(

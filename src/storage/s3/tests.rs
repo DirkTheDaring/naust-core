@@ -2884,18 +2884,30 @@ async fn test_s3_membership_migration_multiarch_manifest_list_traversal() {
         .await
         .unwrap();
 
-    storage_arc.set_tag(repo, "latest", &digest_index).await.unwrap();
+    storage_arc
+        .set_tag(repo, "latest", &digest_index)
+        .await
+        .unwrap();
 
-    let plan_stats = crate::membership_migration::plan_membership_migration(&storage_arc).await.unwrap();
+    let plan_stats = crate::membership_migration::plan_membership_migration(&storage_arc)
+        .await
+        .unwrap();
     assert_eq!(plan_stats.manifests_scanned, 3);
     assert_eq!(plan_stats.memberships_created, 4);
 
-    let apply_stats = crate::membership_migration::apply_membership_migration(&storage_arc).await.unwrap();
+    let apply_stats = crate::membership_migration::apply_membership_migration(&storage_arc)
+        .await
+        .unwrap();
     assert_eq!(apply_stats.manifests_scanned, 3);
     assert_eq!(apply_stats.memberships_created, 4);
 
-    let verified = crate::membership_migration::verify_membership_migration(&storage_arc).await.unwrap();
-    assert!(verified, "membership verification must pass for multi-arch manifest lists on S3");
+    let verified = crate::membership_migration::verify_membership_migration(&storage_arc)
+        .await
+        .unwrap();
+    assert!(
+        verified,
+        "membership verification must pass for multi-arch manifest lists on S3"
+    );
 
     for blob in [&config_amd64, &layer_amd64, &config_arm64, &layer_arm64] {
         assert!(
@@ -2981,11 +2993,13 @@ async fn test_s3_manifest_lifecycle_delete_manifest_and_coordination() {
     assert!(storage_arc.head_manifest(repo, &digest).await.is_err());
 
     // Verify lifecycle journal is deleted from S3
-    assert!(storage_arc
-        .read_lifecycle_journal(repo)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        storage_arc
+            .read_lifecycle_journal(repo)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     // Verify lease was released on S3 (new coordination can be acquired immediately)
     let coord = service.acquire_coordination(repo).await;
@@ -3011,9 +3025,7 @@ async fn test_s3_acquire_coordination_does_not_block_unrelated_repo_during_lease
 
     // Spawn task attempting to acquire coordination on repo-a (will loop with backoff on S3)
     let service_clone = service.clone();
-    let task_a = tokio::spawn(async move {
-        service_clone.acquire_coordination("repo-a").await
-    });
+    let task_a = tokio::spawn(async move { service_clone.acquire_coordination("repo-a").await });
 
     // Small yield so task_a enters the retry loop for repo-a
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;

@@ -1563,11 +1563,7 @@ impl ManifestLifecycleService {
             for (t, d) in page {
                 if d.as_str() == digest_str {
                     return Err(self
-                        .abort_delete_manifest_precondition_failed(
-                            repo,
-                            &removed_tags,
-                            &mut guard,
-                        )
+                        .abort_delete_manifest_precondition_failed(repo, &removed_tags, &mut guard)
                         .await?);
                 }
                 let _ = t;
@@ -1970,8 +1966,12 @@ mod tests {
             tag: &str,
             expected_version: Option<&str>,
         ) -> Result<crate::storage::ConditionalDeleteResult, StorageError> {
-            if self.force_persistent_tag_precondition_failed.load(Ordering::SeqCst)
-                || self.force_tag_precondition_failed.swap(false, Ordering::SeqCst)
+            if self
+                .force_persistent_tag_precondition_failed
+                .load(Ordering::SeqCst)
+                || self
+                    .force_tag_precondition_failed
+                    .swap(false, Ordering::SeqCst)
             {
                 return Ok(
                     crate::storage::ConditionalDeleteResult::PreconditionFailed {
@@ -2426,7 +2426,11 @@ mod tests {
             .put_manifest(repo, &m_d, manifest_bytes)
             .await
             .unwrap();
-        mock_storage.inner.set_tag(repo, "latest", &m_d).await.unwrap();
+        mock_storage
+            .inner
+            .set_tag(repo, "latest", &m_d)
+            .await
+            .unwrap();
 
         // Inject persistent tag precondition failure for all retries
         mock_storage
@@ -2461,7 +2465,11 @@ mod tests {
             "manifest must remain intact"
         );
         assert_eq!(
-            mock_storage.inner.resolve_tag(repo, "latest").await.unwrap(),
+            mock_storage
+                .inner
+                .resolve_tag(repo, "latest")
+                .await
+                .unwrap(),
             m_d,
             "tag must remain intact"
         );
@@ -2480,9 +2488,8 @@ mod tests {
 
         // Spawn task attempting to acquire coordination on repo-a (will loop with backoff)
         let service_clone = service.clone();
-        let task_a = tokio::spawn(async move {
-            service_clone.acquire_coordination("repo-a").await
-        });
+        let task_a =
+            tokio::spawn(async move { service_clone.acquire_coordination("repo-a").await });
 
         // Small yield so task_a enters the retry loop for repo-a
         tokio::time::sleep(Duration::from_millis(20)).await;
