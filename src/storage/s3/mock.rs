@@ -335,6 +335,41 @@ impl S3Driver for MockS3Driver {
         Ok(res)
     }
 
+    async fn get_object_range(
+        &self,
+        _bucket: &str,
+        key: &str,
+        start: u64,
+        end_inclusive: u64,
+    ) -> Result<Option<std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>>, StorageError> {
+        let mut log = self.call_log.lock().unwrap();
+        log.push(S3CallLogEntry {
+            method: "get_object_range".to_string(),
+            key: key.to_string(),
+            if_match: None,
+            if_none_match: None,
+            body_len: 0,
+        });
+        drop(log);
+
+        self.check_before_hook("get_object_range", key)?;
+        let objs = self.objects.lock().unwrap();
+        let res = objs.get(key).cloned();
+        drop(objs);
+        self.check_after_hook("get_object_range", key)?;
+
+        let Some((bytes, _)) = res else {
+            return Ok(None);
+        };
+        if start > end_inclusive || end_inclusive >= bytes.len() as u64 {
+            return Err(StorageError::backend("byte range exceeds object"));
+        }
+        let start_idx = usize::try_from(start).unwrap_or(usize::MAX);
+        let end_idx = usize::try_from(end_inclusive).unwrap_or(usize::MAX);
+        let slice = bytes.slice(start_idx..=end_idx);
+        Ok(Some(Box::pin(std::io::Cursor::new(slice))))
+    }
+
     async fn head_object(&self, _bucket: &str, key: &str) -> Result<Option<u64>, StorageError> {
         let mut log = self.call_log.lock().unwrap();
         log.push(S3CallLogEntry {

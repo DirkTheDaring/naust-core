@@ -4,7 +4,7 @@ use tokio_util::io::ReaderStream;
 
 use crate::registry::canonical_name::CanonicalRepoName;
 use crate::registry::digest::Digest;
-use crate::storage::ports::BlobCasReader;
+use crate::storage::ports::{BlobCasReader, ProxyStoragePort};
 use crate::storage::repo_membership::RepositoryBlobMembershipStorage;
 use crate::storage::upload_session::{UploadByteStream, UploadStreamError};
 
@@ -134,6 +134,37 @@ impl BlobReadService {
         proxy_target: Option<&ProxyTarget>,
         proxy_only: bool,
     ) -> Result<BlobGetResult, BlobReadError> {
+        self.get_blob_span(repo, digest, proxy_target, proxy_only, None)
+            .await
+    }
+
+    pub async fn get_blob_range(
+        &self,
+        repo: &str,
+        digest: &Digest,
+        start: u64,
+        end_inclusive: u64,
+        proxy_target: Option<&ProxyTarget>,
+        proxy_only: bool,
+    ) -> Result<BlobGetResult, BlobReadError> {
+        self.get_blob_span(
+            repo,
+            digest,
+            proxy_target,
+            proxy_only,
+            Some((start, end_inclusive)),
+        )
+        .await
+    }
+
+    async fn get_blob_span(
+        &self,
+        repo: &str,
+        digest: &Digest,
+        proxy_target: Option<&ProxyTarget>,
+        proxy_only: bool,
+        range: Option<(u64, u64)>,
+    ) -> Result<BlobGetResult, BlobReadError> {
         CanonicalRepoName::parse(repo).map_err(|source| BlobReadError::InvalidRepoName {
             name: repo.to_string(),
             source,
@@ -147,7 +178,7 @@ impl BlobReadService {
                 .map_err(BlobReadError::Storage)?;
 
             if membership.is_some() {
-                match self.blob_reader.open_blob(digest).await {
+                match open_cas_reader(self.blob_reader.as_ref(), digest, range).await {
                     Ok((meta, reader)) => {
                         let stream =
                             ReaderStream::new(reader).map(|r| r.map_err(UploadStreamError::Io));
@@ -168,7 +199,9 @@ impl BlobReadService {
 
         // Proxy fallback if configured
         if let Some(target) = proxy_target {
-            if let Ok((meta, reader)) = target.cache_storage.open_blob(digest).await {
+            if let Ok((meta, reader)) =
+                open_cas_reader(target.cache_storage.as_blob_reader(), digest, range).await
+            {
                 target.proxy.note_blob_access(digest);
                 if let Err(e) = self
                     .blob_mutation
@@ -204,7 +237,9 @@ impl BlobReadService {
                     .await
                     .is_ok()
                 {
-                    if let Ok((meta, reader)) = target.cache_storage.open_blob(digest).await {
+                    if let Ok((meta, reader)) =
+                        open_cas_reader(target.cache_storage.as_blob_reader(), digest, range).await
+                    {
                         target.proxy.note_blob_access(digest);
                         let stream =
                             ReaderStream::new(reader).map(|r| r.map_err(UploadStreamError::Io));
@@ -220,5 +255,22 @@ impl BlobReadService {
         }
 
         Err(BlobReadError::NotFound)
+    }
+}
+
+async fn open_cas_reader(
+    reader: &dyn BlobCasReader,
+    digest: &Digest,
+    range: Option<(u64, u64)>,
+) -> Result<
+    (
+        crate::storage::BlobMeta,
+        std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>,
+    ),
+    crate::storage::StorageError,
+> {
+    match range {
+        Some((start, end_inclusive)) => reader.open_blob_range(digest, start, end_inclusive).await,
+        None => reader.open_blob(digest).await,
     }
 }

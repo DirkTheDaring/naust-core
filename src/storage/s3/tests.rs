@@ -4930,3 +4930,35 @@ async fn test_s3_unlink_repo_blob_failure_propagates_and_replacement_not_deleted
     );
     driver.clear_hooks();
 }
+
+#[tokio::test]
+async fn open_blob_range_uses_ranged_get_and_not_the_collecting_get() {
+    let digest = crate::registry::digest::Digest::parse(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    .unwrap();
+    let key = format!("blobs/sha256/aa/{}", digest.hex());
+    let body = Bytes::from(vec![1u8, 2, 3, 4, 5, 6, 7, 8]);
+    let driver = std::sync::Arc::new(MockS3Driver::new(1));
+    driver
+        .objects
+        .lock()
+        .unwrap()
+        .insert(key, (body, "etag".to_string()));
+    let storage = S3Storage::new_with_driver(
+        Some("range-bucket".to_string()),
+        String::new(),
+        1024,
+        driver.clone(),
+    );
+    let (meta, mut reader) = storage.open_blob_range(&digest, 2, 4).await.unwrap();
+    assert_eq!(meta.size, 8);
+    let mut got = Vec::new();
+    tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut got)
+        .await
+        .unwrap();
+    assert_eq!(got, vec![3, 4, 5]);
+    let log = driver.get_call_log();
+    assert!(log.iter().any(|entry| entry.method == "get_object_range"));
+    assert!(log.iter().all(|entry| entry.method != "get_object"));
+}

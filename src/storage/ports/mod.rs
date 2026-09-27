@@ -22,6 +22,29 @@ pub trait BlobCasReader: Send + Sync {
         &self,
         digest: &Digest,
     ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError>;
+
+    /// Reads the inclusive span `[start, end_inclusive]`.
+    ///
+    /// `BlobMeta.size` is the full object size. The default opens the whole
+    /// object and discards the prefix. Production filesystem and S3 readers
+    /// override it.
+    async fn open_blob_range(
+        &self,
+        digest: &Digest,
+        start: u64,
+        end_inclusive: u64,
+    ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError> {
+        if start > end_inclusive {
+            return Err(StorageError::backend("byte range exceeds object"));
+        }
+        let (meta, reader) = self.open_blob(digest).await?;
+        if end_inclusive >= meta.size {
+            return Err(StorageError::backend("byte range exceeds object"));
+        }
+        let length = end_inclusive - start + 1;
+        let reader = crate::storage::span_reader(reader, start, length).await?;
+        Ok((meta, reader))
+    }
 }
 
 /// CAS blob upload and creation port.
@@ -450,6 +473,14 @@ macro_rules! impl_storage_ports {
             ) -> Result<($crate::storage::BlobMeta, std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>), $crate::storage::StorageError> {
                 $crate::storage::Storage::open_blob(self, digest).await
             }
+            async fn open_blob_range(
+                &self,
+                digest: &$crate::registry::digest::Digest,
+                start: u64,
+                end_inclusive: u64,
+            ) -> Result<($crate::storage::BlobMeta, std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>), $crate::storage::StorageError> {
+                $crate::storage::Storage::open_blob_range(self, digest, start, end_inclusive).await
+            }
         }
 
         #[async_trait::async_trait]
@@ -803,6 +834,14 @@ impl<T: ?Sized + BlobCasReader + Send + Sync> BlobCasReader for Arc<T> {
         digest: &Digest,
     ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError> {
         (**self).open_blob(digest).await
+    }
+    async fn open_blob_range(
+        &self,
+        digest: &Digest,
+        start: u64,
+        end_inclusive: u64,
+    ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError> {
+        (**self).open_blob_range(digest, start, end_inclusive).await
     }
 }
 

@@ -248,6 +248,41 @@ pub(crate) async fn open_blob_seam(
     }
 }
 
+pub(crate) async fn open_blob_range_seam(
+    reader: &(impl storage_core::ObjectPayloadReader + ?Sized),
+    digest: &Digest,
+    start: u64,
+    end_inclusive: u64,
+) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError> {
+    if start > end_inclusive {
+        return Err(StorageError::backend("byte range exceeds object"));
+    }
+    let length = end_inclusive - start + 1;
+    let primary_key = blob_primary_key(digest)?;
+
+    match reader.open_payload_range(&primary_key, start, length).await {
+        Ok(payload) => {
+            let (meta, stream) = payload.into_parts();
+            Ok((BlobMeta { size: meta.size() }, stream))
+        }
+        Err(storage_core::ReadError::NotFound { .. }) => {
+            let quarantine_key = blob_quarantine_key(digest)?;
+            match reader
+                .open_payload_range(&quarantine_key, start, length)
+                .await
+            {
+                Ok(payload) => {
+                    let (meta, stream) = payload.into_parts();
+                    Ok((BlobMeta { size: meta.size() }, stream))
+                }
+                Err(storage_core::ReadError::NotFound { .. }) => Err(StorageError::NotFound),
+                Err(other) => Err(translate_payload_read_error(other)),
+            }
+        }
+        Err(other) => Err(translate_payload_read_error(other)),
+    }
+}
+
 /// Registry-owned filesystem CAS blob read adapter wrapping a unified reader into [`BlobCasReader`].
 ///
 /// Accepts an already-constructed reader `R` implementing both [`storage_core::ObjectMetadataReader`]
@@ -290,6 +325,15 @@ where
         digest: &Digest,
     ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError> {
         open_blob_seam(self.reader.as_ref(), digest).await
+    }
+
+    async fn open_blob_range(
+        &self,
+        digest: &Digest,
+        start: u64,
+        end_inclusive: u64,
+    ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError> {
+        open_blob_range_seam(self.reader.as_ref(), digest, start, end_inclusive).await
     }
 }
 

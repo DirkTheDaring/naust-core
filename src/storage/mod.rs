@@ -363,6 +363,25 @@ pub struct ReferrerDescriptor {
     pub annotations: Option<HashMap<String, String>>,
 }
 
+pub(crate) async fn span_reader(
+    mut reader: Pin<Box<dyn AsyncRead + Send>>,
+    start: u64,
+    length: u64,
+) -> Result<Pin<Box<dyn AsyncRead + Send>>, StorageError> {
+    use tokio::io::AsyncReadExt;
+    let mut remaining = start;
+    let mut buf = [0u8; 8192];
+    while remaining > 0 {
+        let n = usize::try_from(remaining.min(buf.len() as u64)).unwrap_or(buf.len());
+        let read = reader.read(&mut buf[..n]).await.map_err(StorageError::io)?;
+        if read == 0 {
+            return Err(StorageError::backend("byte range exceeds object"));
+        }
+        remaining -= u64::try_from(read).unwrap_or(0);
+    }
+    Ok(Box::pin(reader.take(length)))
+}
+
 #[async_trait]
 pub trait Storage:
     Send + Sync + UploadSessionStorage + RepositoryBlobMembershipStorage + GcStorage
@@ -388,6 +407,29 @@ pub trait Storage:
         &self,
         digest: &Digest,
     ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError>;
+
+    /// Reads the inclusive span `[start, end_inclusive]`.
+    ///
+    /// `BlobMeta.size` is the full object size. The reader yields exactly the span.
+    /// The default opens the whole object and discards the prefix. Filesystem and
+    /// S3 production implementations override it.
+    async fn open_blob_range(
+        &self,
+        digest: &Digest,
+        start: u64,
+        end_inclusive: u64,
+    ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError> {
+        if start > end_inclusive {
+            return Err(StorageError::backend("byte range exceeds object"));
+        }
+        let (meta, reader) = self.open_blob(digest).await?;
+        if end_inclusive >= meta.size {
+            return Err(StorageError::backend("byte range exceeds object"));
+        }
+        let length = end_inclusive - start + 1;
+        let reader = span_reader(reader, start, length).await?;
+        Ok((meta, reader))
+    }
 
     async fn resolve_tag(&self, name: &str, tag: &str) -> Result<Digest, StorageError>;
 
@@ -642,6 +684,14 @@ impl<T: ?Sized + Storage + Send + Sync> Storage for Arc<T> {
         digest: &Digest,
     ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError> {
         (**self).open_blob(digest).await
+    }
+    async fn open_blob_range(
+        &self,
+        digest: &Digest,
+        start: u64,
+        end_inclusive: u64,
+    ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError> {
+        (**self).open_blob_range(digest, start, end_inclusive).await
     }
     async fn resolve_tag(&self, name: &str, tag: &str) -> Result<Digest, StorageError> {
         (**self).resolve_tag(name, tag).await

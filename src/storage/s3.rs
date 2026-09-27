@@ -108,6 +108,19 @@ pub trait S3Driver: Send + Sync + 'static {
         bucket: &str,
         key: &str,
     ) -> Result<Option<(Bytes, String)>, StorageError>;
+
+    /// Streams the inclusive byte span. The default refuses so a collecting
+    /// `get_object` cannot be reused for a range. [`AwsS3Driver`] overrides it.
+    async fn get_object_range(
+        &self,
+        _bucket: &str,
+        _key: &str,
+        _start: u64,
+        _end_inclusive: u64,
+    ) -> Result<Option<Pin<Box<dyn AsyncRead + Send>>>, StorageError> {
+        Err(StorageError::Unsupported)
+    }
+
     async fn head_object(&self, bucket: &str, key: &str) -> Result<Option<u64>, StorageError>;
     async fn put_object_conditional(
         &self,
@@ -470,6 +483,37 @@ impl S3Driver for AwsS3Driver {
             .map_err(|e| StorageError::backend(e.to_string()))?
             .into_bytes();
         Ok(Some((bytes, etag)))
+    }
+
+    async fn get_object_range(
+        &self,
+        bucket: &str,
+        key: &str,
+        start: u64,
+        end_inclusive: u64,
+    ) -> Result<Option<Pin<Box<dyn AsyncRead + Send>>>, StorageError> {
+        let client = self.client().await?;
+        let range = format!("bytes={start}-{end_inclusive}");
+        let resp = match client
+            .get_object()
+            .bucket(bucket)
+            .key(key)
+            .range(range)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(err) => {
+                let s3_err = map_s3_err(err);
+                if matches!(s3_err, StorageError::NotFound) {
+                    return Ok(None);
+                }
+                return Err(s3_err);
+            }
+        };
+        let length = end_inclusive.saturating_sub(start).saturating_add(1);
+        let reader = tokio::io::AsyncReadExt::take(resp.body.into_async_read(), length);
+        Ok(Some(Box::pin(reader)))
     }
 
     async fn head_object(&self, bucket: &str, key: &str) -> Result<Option<u64>, StorageError> {
@@ -1726,6 +1770,33 @@ impl Storage for S3Storage {
             }
             None => Err(StorageError::NotFound),
         }
+    }
+
+    async fn open_blob_range(
+        &self,
+        digest: &Digest,
+        start: u64,
+        end_inclusive: u64,
+    ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError> {
+        if start > end_inclusive {
+            return Err(StorageError::backend("byte range exceeds object"));
+        }
+        let bucket = self.bucket()?;
+        let key = self.blob_key2(digest);
+        let size = self
+            .driver
+            .head_object(bucket, &key)
+            .await?
+            .ok_or(StorageError::NotFound)?;
+        if end_inclusive >= size {
+            return Err(StorageError::backend("byte range exceeds object"));
+        }
+        let reader = self
+            .driver
+            .get_object_range(bucket, &key, start, end_inclusive)
+            .await?
+            .ok_or(StorageError::NotFound)?;
+        Ok((BlobMeta { size }, reader))
     }
 
     async fn resolve_tag(&self, name: &str, tag: &str) -> Result<Digest, StorageError> {

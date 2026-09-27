@@ -1199,6 +1199,18 @@ impl Storage for FsStorage {
         self.read_adapter.open_blob(digest).await
     }
 
+    async fn open_blob_range(
+        &self,
+        digest: &Digest,
+        start: u64,
+        end_inclusive: u64,
+    ) -> Result<(BlobMeta, std::pin::Pin<Box<dyn AsyncRead + Send>>), StorageError> {
+        use crate::storage::ports::BlobCasReader;
+        self.read_adapter
+            .open_blob_range(digest, start, end_inclusive)
+            .await
+    }
+
     async fn resolve_tag(&self, name: &str, tag: &str) -> Result<Digest, StorageError> {
         self.tag_domain.resolve_tag(name, tag).await
     }
