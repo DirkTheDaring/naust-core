@@ -121,6 +121,23 @@ pub trait S3Driver: Send + Sync + 'static {
         Err(StorageError::Unsupported)
     }
 
+    /// Streams the entire object without collecting it into memory.
+    async fn get_object_stream(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<Option<(u64, Pin<Box<dyn AsyncRead + Send>>)>, StorageError> {
+        let res = self.get_object(bucket, key).await?;
+        match res {
+            Some((bytes, _)) => {
+                let size = bytes.len() as u64;
+                let reader = std::io::Cursor::new(bytes);
+                Ok(Some((size, Box::pin(reader))))
+            }
+            None => Ok(None),
+        }
+    }
+
     async fn head_object(&self, bucket: &str, key: &str) -> Result<Option<u64>, StorageError>;
     async fn put_object_conditional(
         &self,
@@ -516,6 +533,27 @@ impl S3Driver for AwsS3Driver {
         Ok(Some(Box::pin(reader)))
     }
 
+    async fn get_object_stream(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<Option<(u64, Pin<Box<dyn AsyncRead + Send>>)>, StorageError> {
+        let client = self.client().await?;
+        let resp = match client.get_object().bucket(bucket).key(key).send().await {
+            Ok(r) => r,
+            Err(err) => {
+                let s3_err = map_s3_err(err);
+                if matches!(s3_err, StorageError::NotFound) {
+                    return Ok(None);
+                }
+                return Err(s3_err);
+            }
+        };
+        let size = resp.content_length().unwrap_or(0).max(0) as u64;
+        let reader = resp.body.into_async_read();
+        Ok(Some((size, Box::pin(reader))))
+    }
+
     async fn head_object(&self, bucket: &str, key: &str) -> Result<Option<u64>, StorageError> {
         let client = self.client().await?;
         match client.head_object().bucket(bucket).key(key).send().await {
@@ -782,6 +820,7 @@ pub struct S3SessionConfig {
     pub receipt_lifetime_secs: u64,
     pub upload_expiration_secs: u64,
     pub legacy_multipart_cleanup_policy: crate::policy::LegacyMultipartCleanupPolicy,
+    pub part_size_bytes: usize,
 }
 
 impl Default for S3SessionConfig {
@@ -793,6 +832,7 @@ impl Default for S3SessionConfig {
             receipt_lifetime_secs: 72 * 3600,
             upload_expiration_secs: 24 * 3600,
             legacy_multipart_cleanup_policy: crate::policy::LegacyMultipartCleanupPolicy::Disabled,
+            part_size_bytes: S3_PART_SIZE,
         }
     }
 }
@@ -1761,13 +1801,9 @@ impl Storage for S3Storage {
     ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError> {
         let bucket = self.bucket()?;
         let key = self.blob_key2(digest);
-        let res = self.driver.get_object(bucket, &key).await?;
+        let res = self.driver.get_object_stream(bucket, &key).await?;
         match res {
-            Some((bytes, _)) => {
-                let size = bytes.len() as u64;
-                let reader = std::io::Cursor::new(bytes);
-                Ok((BlobMeta { size }, Box::pin(reader)))
-            }
+            Some((size, reader)) => Ok((BlobMeta { size }, reader)),
             None => Err(StorageError::NotFound),
         }
     }
@@ -2457,8 +2493,13 @@ pub const S3_LEASE_DURATION_SECS: u64 = 300;
 /// Interval at which active upload stream workers renew their session lease.
 pub const S3_LEASE_RENEWAL_INTERVAL_SECS: u64 = 60;
 
-/// S3 multipart part size threshold (5 MiB standard minimum chunk size).
-pub const S3_PART_SIZE: usize = 5 * 1024 * 1024;
+/// S3 multipart part size constraints.
+pub const S3_MIN_PART_SIZE: usize = 5 * 1024 * 1024; // 5 MiB AWS S3 minimum
+pub const S3_MAX_PART_SIZE: usize = 5 * 1024 * 1024 * 1024; // 5 GiB AWS S3 maximum
+pub const DEFAULT_S3_PART_SIZE: usize = 64 * 1024 * 1024; // 64 MiB default for AI image compatibility (up to 640 GB)
+
+/// S3 multipart standard minimum chunk size (5 MiB).
+pub const S3_PART_SIZE: usize = S3_MIN_PART_SIZE;
 
 /// Maximum number of CAS retry attempts under transient contention.
 pub const S3_MAX_RETRY_ATTEMPTS: u32 = 3;
@@ -2656,8 +2697,12 @@ impl UploadSessionStorage for S3Storage {
             }
         }
 
-        // 2. Read existing pending bytes if any (strictly < 5 MiB)
-        let mut buffer = Vec::with_capacity(S3_PART_SIZE + 64 * 1024);
+        // 2. Read existing pending bytes if any (strictly < part_size)
+        let part_size = self
+            .session_config
+            .part_size_bytes
+            .clamp(S3_MIN_PART_SIZE, S3_MAX_PART_SIZE);
+        let mut buffer = Vec::with_capacity(part_size + 64 * 1024);
         if let Some(ref pending_key) = reserved_doc.pending_buffer_key
             && let Ok(Some((b, _))) = self.driver.get_object(bucket, pending_key).await
         {
@@ -2682,7 +2727,7 @@ impl UploadSessionStorage for S3Storage {
         let mut last_renewed_at = self.driver.now_unix_secs();
         let data_key = self.multipart_data_key(&session.uuid);
 
-        // 3. Streaming loop: read chunk, buffer, upload 5 MiB parts when full, renew lease
+        // 3. Streaming loop: read chunk, buffer, upload full parts when full, renew lease
         while let Some(chunk_res) = stream.next().await {
             let chunk = match chunk_res {
                 Ok(c) => c,
@@ -2748,9 +2793,9 @@ impl UploadSessionStorage for S3Storage {
                 }
             }
 
-            // Upload full 5 MiB parts as they accumulate
-            while buffer.len() >= S3_PART_SIZE {
-                let part_bytes = Bytes::copy_from_slice(&buffer[..S3_PART_SIZE]);
+            // Upload full parts as they accumulate
+            while buffer.len() >= part_size {
+                let part_bytes = Bytes::copy_from_slice(&buffer[..part_size]);
                 let part_etag = self
                     .driver
                     .upload_part(
@@ -2765,11 +2810,11 @@ impl UploadSessionStorage for S3Storage {
 
                 parts_to_commit.push(S3CommittedPart {
                     part_number: target_part_number,
-                    size: S3_PART_SIZE as u64,
+                    size: part_size as u64,
                     etag: part_etag,
                 });
                 target_part_number += 1;
-                buffer.drain(..S3_PART_SIZE);
+                buffer.drain(..part_size);
             }
         }
 
@@ -3006,20 +3051,40 @@ impl UploadSessionStorage for S3Storage {
         }
         let _ = finalizing_etag;
 
-        // STEP 4: Verify digest by reading staged object
-        let staged_bytes = match self.driver.get_object(bucket, &data_key).await {
-            Ok(Some((b, _))) => b,
+        // STEP 4: Verify digest by streaming staged object (constant memory)
+        let (_, mut reader) = match self.driver.get_object_stream(bucket, &data_key).await {
+            Ok(Some(res)) => res,
             Ok(None) => return Err(UploadTransitionError::NotFound),
             Err(e) => return Err(UploadTransitionError::Storage(e)),
         };
 
+        use tokio::io::AsyncReadExt as _;
+        let mut chunk_buf = [0u8; 64 * 1024];
         let computed_hex = if expected_digest.algorithm() == "sha512" {
             let mut hasher = sha2::Sha512::new();
-            hasher.update(&staged_bytes);
+            loop {
+                let n = reader
+                    .read(&mut chunk_buf)
+                    .await
+                    .map_err(|e| UploadTransitionError::Storage(StorageError::io(e.to_string())))?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&chunk_buf[..n]);
+            }
             hex::encode(hasher.finalize())
         } else {
             let mut hasher = sha2::Sha256::new();
-            hasher.update(&staged_bytes);
+            loop {
+                let n = reader
+                    .read(&mut chunk_buf)
+                    .await
+                    .map_err(|e| UploadTransitionError::Storage(StorageError::io(e.to_string())))?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&chunk_buf[..n]);
+            }
             hex::encode(hasher.finalize())
         };
 

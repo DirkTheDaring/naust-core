@@ -4962,3 +4962,51 @@ async fn open_blob_range_uses_ranged_get_and_not_the_collecting_get() {
     assert!(log.iter().any(|entry| entry.method == "get_object_range"));
     assert!(log.iter().all(|entry| entry.method != "get_object"));
 }
+
+#[tokio::test]
+async fn test_s3_chunk_upload_with_custom_part_size() {
+    let (mut storage, driver) = create_mock_storage();
+    let custom_part_size = 8 * 1024 * 1024; // 8 MiB custom part size
+    storage = storage.with_session_config(S3SessionConfig {
+        part_size_bytes: custom_part_size,
+        ..S3SessionConfig::default()
+    });
+
+    let session = storage.create_session("myrepo").await.unwrap();
+
+    // Stream 18 MiB of data: should create two 8 MiB parts (16 MiB total) and 2 MiB pending
+    let total_bytes = 18 * 1024 * 1024;
+    let stream = make_test_stream(vec![Bytes::from(vec![0xAA; 1024 * 1024]); 18]);
+
+    let res = storage
+        .append_if_offset(&session, UploadOffsetPrecondition::Exact(0), stream, 0)
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        res,
+        UploadAppendResult::Committed {
+            new_offset
+        } if new_offset == total_bytes as u64
+    ));
+
+    let status = storage.session_status(&session).await.unwrap();
+    assert_eq!(status.committed_offset, total_bytes as u64);
+
+    let doc_bytes = driver
+        .objects
+        .lock()
+        .unwrap()
+        .get(&format!("uploads/{}/session.json", session.uuid))
+        .unwrap()
+        .0
+        .clone();
+    let doc: S3SessionDoc = serde_json::from_slice(&doc_bytes).unwrap();
+    assert_eq!(doc.committed_parts.len(), 2);
+    assert_eq!(doc.committed_parts[0].size, custom_part_size as u64);
+    assert_eq!(doc.committed_parts[1].size, custom_part_size as u64);
+    assert_eq!(
+        doc.pending_bytes,
+        total_bytes as u64 - (2 * custom_part_size as u64)
+    );
+}

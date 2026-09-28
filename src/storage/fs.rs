@@ -1506,7 +1506,7 @@ impl Storage for FsStorage {
                 let mut file = handle.into_file();
                 let current_len = file.metadata().map_err(map_fs_io_err)?.len();
                 let next_len = current_len.saturating_add(chunk_for_write.len() as u64);
-                if next_len > max_upload_bytes {
+                if max_upload_bytes > 0 && next_len > max_upload_bytes {
                     return Err(StorageError::TooLarge);
                 }
                 file.write_all(&chunk_for_write).map_err(map_fs_io_err)?;
