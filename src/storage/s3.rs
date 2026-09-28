@@ -3060,33 +3060,32 @@ impl UploadSessionStorage for S3Storage {
 
         use tokio::io::AsyncReadExt as _;
         let mut chunk_buf = [0u8; 64 * 1024];
-        let computed_hex = if expected_digest.algorithm() == "sha512" {
-            let mut hasher = sha2::Sha512::new();
-            loop {
-                let n = reader
-                    .read(&mut chunk_buf)
-                    .await
-                    .map_err(|e| UploadTransitionError::Storage(StorageError::io(e.to_string())))?;
-                if n == 0 {
-                    break;
+        let computed_hex =
+            if expected_digest.algorithm() == "sha512" {
+                let mut hasher = sha2::Sha512::new();
+                loop {
+                    let n = reader.read(&mut chunk_buf).await.map_err(|e| {
+                        UploadTransitionError::Storage(StorageError::io(e.to_string()))
+                    })?;
+                    if n == 0 {
+                        break;
+                    }
+                    hasher.update(&chunk_buf[..n]);
                 }
-                hasher.update(&chunk_buf[..n]);
-            }
-            hex::encode(hasher.finalize())
-        } else {
-            let mut hasher = sha2::Sha256::new();
-            loop {
-                let n = reader
-                    .read(&mut chunk_buf)
-                    .await
-                    .map_err(|e| UploadTransitionError::Storage(StorageError::io(e.to_string())))?;
-                if n == 0 {
-                    break;
+                hex::encode(hasher.finalize())
+            } else {
+                let mut hasher = sha2::Sha256::new();
+                loop {
+                    let n = reader.read(&mut chunk_buf).await.map_err(|e| {
+                        UploadTransitionError::Storage(StorageError::io(e.to_string()))
+                    })?;
+                    if n == 0 {
+                        break;
+                    }
+                    hasher.update(&chunk_buf[..n]);
                 }
-                hasher.update(&chunk_buf[..n]);
-            }
-            hex::encode(hasher.finalize())
-        };
+                hex::encode(hasher.finalize())
+            };
 
         if computed_hex != expected_digest.hex() {
             if abort_on_digest_mismatch {
