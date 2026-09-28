@@ -583,13 +583,13 @@ async fn shared_listing_unbounded_streaming() {
 
     // S3 adapter over the deterministic mock client.
     {
-        let client = Arc::new(storage_s3::mock::MockS3Client::new());
+        let client = Arc::new(naust_storage_s3::mock::MockS3Client::new());
         for h in [HEX1, HEX2] {
             client.raw_insert_bytes(&format!("repos/r/manifests/{h}"), manifest_json());
         }
         let hex3 = "3333333333333333333333333333333333333333333333333333333333333333";
         client.raw_insert_bytes(&format!("repos/r/manifests/{hex3}"), manifest_json());
-        let store = storage_s3::S3ObjectStore::new(client, None).unwrap();
+        let store = naust_storage_s3::S3ObjectStore::new(client, None).unwrap();
         let cfg = ManifestDomainConfig {
             max_listing_entries: usize::MAX,
         };
@@ -612,7 +612,7 @@ async fn shared_listing_unbounded_streaming() {
         ] {
             std::fs::write(mdir.join(h), manifest_json()).unwrap();
         }
-        let store = storage_fs::FsObjectStore::open(&root).unwrap();
+        let store = naust_storage_fs::FsObjectStore::open(&root).unwrap();
         let cfg = ManifestDomainConfig {
             max_listing_entries: usize::MAX,
         };
@@ -743,7 +743,7 @@ async fn fs_symlink_fail_closed() {
 /// here — for tag publication).
 #[tokio::test]
 async fn fs_durability_and_enospc_classification() {
-    use storage_fs::mutate::fault::{self, FaultPoint};
+    use naust_storage_fs::mutate::fault::{self, FaultPoint};
 
     let _fault_guard = crate::storage::store_common::fault_scenario::begin().await;
     let b = fs_backend();

@@ -5,7 +5,7 @@
 //! Implements the subtree probes of `FsStorage::is_storage_empty` (formerly
 //! the ambient recursive `fs_dir_has_any_entry`). All filesystem observation
 //! resolves beneath the shared pinned root descriptor via
-//! [`storage_fs::FsMetadataReader`]: directory enumeration through
+//! [`naust_storage_fs::FsMetadataReader`]: directory enumeration through
 //! `enumerate_dir` (`openat2` with
 //! `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS`).
 //! Blocking work executes off async executor threads inside the dependency's
@@ -44,8 +44,10 @@
 use std::collections::VecDeque;
 
 use async_trait::async_trait;
-use storage_core::ObjectKey;
-use storage_fs::{DirEntry, DirEntryType, DirEnumerationLimits, FsDirError, FsMetadataReader};
+use naust_storage_core::ObjectKey;
+use naust_storage_fs::{
+    DirEntry, DirEntryType, DirEnumerationLimits, FsDirError, FsMetadataReader,
+};
 
 use super::catalog_discovery::map_contained_dir_error;
 use crate::storage::StorageError;

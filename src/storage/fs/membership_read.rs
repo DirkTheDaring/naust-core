@@ -9,7 +9,7 @@
 //! `count_repo_blob_memberships`, the readiness-marker leg of
 //! `is_membership_ready`, and `get_migration_checkpoint`. All filesystem
 //! observation resolves beneath the shared pinned root descriptor via
-//! [`storage_fs::FsMetadataReader`]: directory enumeration (`enumerate_dir`,
+//! [`naust_storage_fs::FsMetadataReader`]: directory enumeration (`enumerate_dir`,
 //! `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS`),
 //! payload acquisition (`open_payload`, two-phase `O_PATH` + `S_IFREG` +
 //! procfs reopen), and attribute inspection (`inspect_file_metadata`).
@@ -115,8 +115,8 @@
 use std::collections::BinaryHeap;
 
 use async_trait::async_trait;
-use storage_core::{ObjectKey, ObjectPayload, ObjectPayloadReader, ReadError};
-use storage_fs::{
+use naust_storage_core::{ObjectKey, ObjectPayload, ObjectPayloadReader, ReadError};
+use naust_storage_fs::{
     DirEntry, DirEntryType, DirEnumerationLimits, FsDirError, FsFileMetadata, FsMetadataReader,
 };
 use tokio::io::AsyncReadExt;
@@ -544,8 +544,8 @@ fn inspection_confirms_non_regular(err: &ReadError) -> bool {
             source: Some(source),
             ..
         } => matches!(
-            source.downcast_ref::<storage_fs::FsMetadataError>(),
-            Some(storage_fs::FsMetadataError::UnsupportedObjectType { .. })
+            source.downcast_ref::<naust_storage_fs::FsMetadataError>(),
+            Some(naust_storage_fs::FsMetadataError::UnsupportedObjectType { .. })
         ),
         _ => false,
     }
@@ -600,10 +600,10 @@ mod tests {
     use super::*;
     use crate::storage::StorageErrorKind;
     use crate::storage::repo_membership::{MigrationPhase, MigrationStats};
+    use naust_storage_core::{ObjectMetadata, ObjectStream};
     use std::collections::{HashMap, VecDeque};
     use std::ffi::OsString;
     use std::sync::{Arc, Mutex};
-    use storage_core::{ObjectMetadata, ObjectStream};
 
     struct RecordingFakeOps {
         dir_calls: Arc<Mutex<Vec<Option<ObjectKey>>>>,
@@ -741,7 +741,7 @@ mod tests {
     fn rejection(code: i32) -> ReadError {
         ReadError::backend_with_source(
             "resolution rejected",
-            Box::new(storage_fs::FsMetadataError::ResolutionRejected {
+            Box::new(naust_storage_fs::FsMetadataError::ResolutionRejected {
                 raw_os_error: code,
                 source: std::io::Error::from_raw_os_error(code),
             }),
@@ -1301,7 +1301,7 @@ mod tests {
             key(&marker("r1")),
             Err(ReadError::backend_with_source(
                 "unsupported object type",
-                Box::new(storage_fs::FsMetadataError::UnsupportedObjectType {
+                Box::new(naust_storage_fs::FsMetadataError::UnsupportedObjectType {
                     mode: libc::S_IFDIR,
                 }),
             )),
@@ -1360,7 +1360,7 @@ mod tests {
             k.clone(),
             Err(ReadError::backend_with_source(
                 "unsupported object type",
-                Box::new(storage_fs::FsMetadataError::UnsupportedObjectType {
+                Box::new(naust_storage_fs::FsMetadataError::UnsupportedObjectType {
                     mode: libc::S_IFDIR,
                 }),
             )),

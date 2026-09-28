@@ -3,12 +3,12 @@
 //! The manifest LISTING MECHANICS that previously lived here (the contained
 //! `list_manifest_digests_page_impl` seam) migrated to the backend-neutral
 //! shared manifest domain (`crate::storage::manifest_domain`) over
-//! `storage_core::ObjectStore` in the Phase 4 manifest-family cutover. What
+//! `naust_storage_core::ObjectStore` in the Phase 4 manifest-family cutover. What
 //! remains is configuration only: the defaults/minimums wired by
 //! `config.rs`, `gc_service.rs`, and the `FsStorage` constructors into the
 //! manifest object store's enumeration budget.
 
-use storage_fs::DirEnumerationLimits;
+use naust_storage_fs::DirEnumerationLimits;
 
 /// Default maximum number of manifest directory entries to enumerate during listing.
 pub const DEFAULT_MANIFEST_LISTING_MAX_ENTRIES: usize = 10_000;

@@ -982,7 +982,7 @@ async fn fs_root_replacement_pinning_and_coherence() {
 #[tokio::test]
 async fn fs_internal_namespace_unaddressable() {
     let b = fs_backend();
-    let internal = storage_fs::object_store::INTERNAL_DIR;
+    let internal = naust_storage_fs::object_store::INTERNAL_DIR;
     let err = b.resolve_tag(internal, "t").await.unwrap_err();
     assert!(
         matches!(err, StorageError::InvalidRepoName(_)),
@@ -1003,7 +1003,7 @@ async fn fs_internal_namespace_unaddressable() {
 /// surfaces from the registry tag write instead of reporting success.
 #[tokio::test]
 async fn fs_durable_publication_fault_propagates() {
-    use storage_fs::mutate::fault::{self, FaultPoint};
+    use naust_storage_fs::mutate::fault::{self, FaultPoint};
 
     let _fault_guard = crate::storage::store_common::fault_scenario::begin().await;
     let b = fs_backend();

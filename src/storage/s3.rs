@@ -164,7 +164,7 @@ pub trait S3Driver: Send + Sync + 'static {
         &self,
         _bucket: &str,
         _prefix: &str,
-    ) -> Result<Arc<dyn storage_core::object_store::ObjectStore>, StorageError> {
+    ) -> Result<Arc<dyn naust_storage_core::object_store::ObjectStore>, StorageError> {
         Err(StorageError::configuration(
             "this S3 driver does not provide an object store",
         ))
@@ -293,9 +293,9 @@ impl S3Driver for AwsS3Driver {
         &self,
         bucket: &str,
         prefix: &str,
-    ) -> Result<Arc<dyn storage_core::object_store::ObjectStore>, StorageError> {
+    ) -> Result<Arc<dyn naust_storage_core::object_store::ObjectStore>, StorageError> {
         let client = self.client().await?;
-        let s3_client = storage_s3::AwsS3Client::new(client, bucket);
+        let s3_client = naust_storage_s3::AwsS3Client::new(client, bucket);
         let trimmed = prefix.trim_matches('/');
         let prefix_opt = if trimmed.is_empty() {
             None
@@ -303,7 +303,7 @@ impl S3Driver for AwsS3Driver {
             Some(trimmed)
         };
         let store =
-            storage_s3::S3ObjectStore::new(Arc::new(s3_client), prefix_opt).map_err(|e| {
+            naust_storage_s3::S3ObjectStore::new(Arc::new(s3_client), prefix_opt).map_err(|e| {
                 StorageError::configuration(format!(
                     "configured S3 prefix is not usable as a tag store root: {e}"
                 ))
@@ -854,7 +854,7 @@ pub struct S3Storage {
     /// lazily wired backend-neutral ObjectStore shared by both domains
     /// (lazy to preserve the historical first-use surfacing of
     /// bucket/region configuration errors).
-    object_store: Arc<OnceCell<Arc<dyn storage_core::object_store::ObjectStore>>>,
+    object_store: Arc<OnceCell<Arc<dyn naust_storage_core::object_store::ObjectStore>>>,
 }
 
 impl std::fmt::Debug for S3Storage {
@@ -922,7 +922,7 @@ impl S3Storage {
     /// historical per-request configuration errors).
     async fn migrated_object_store(
         &self,
-    ) -> Result<Arc<dyn storage_core::object_store::ObjectStore>, StorageError> {
+    ) -> Result<Arc<dyn naust_storage_core::object_store::ObjectStore>, StorageError> {
         self.object_store
             .get_or_try_init(|| async {
                 let bucket = self.bucket()?;

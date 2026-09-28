@@ -3,13 +3,13 @@
 //! contained file metadata inspection (`FsMetadataReader::inspect_file_metadata`).
 //!
 //! # Architectural Ownership Boundaries
-//! - `storage-core`: Neutral storage contracts, [`storage_core::ObjectKey`],
-//!   [`storage_core::ReadError`].
+//! - `storage-core`: Neutral storage contracts, [`naust_storage_core::ObjectKey`],
+//!   [`naust_storage_core::ReadError`].
 //! - `storage-fs`: Pinned root descriptor ownership, Linux `openat2` containment flags
 //!   (`RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS`), domain-free
-//!   single-directory enumeration ([`storage_fs::DirEntry`], [`storage_fs::DirEntryType`],
-//!   [`storage_fs::DirEnumerationLimits`], [`storage_fs::FsDirError`]), and single-file
-//!   metadata inspection ([`storage_fs::FsFileMetadata`]).
+//!   single-directory enumeration ([`naust_storage_fs::DirEntry`], [`naust_storage_fs::DirEntryType`],
+//!   [`naust_storage_fs::DirEnumerationLimits`], [`naust_storage_fs::FsDirError`]), and single-file
+//!   metadata inspection ([`naust_storage_fs::FsFileMetadata`]).
 //! - `naust`: CAS namespace layout (`blobs/sha256/<2-char-prefix>/<64-char-hex>`),
 //!   digest validation and normalization, lexical cursor comparisons, page-limit clamping [1, 1000],
 //!   exact-full-page next-cursor calculation, error taxonomy translation ([`StorageError`]),
@@ -22,7 +22,7 @@
 //! In that legacy path, `modified()` failure fell back to `std::time::UNIX_EPOCH`, and pre-epoch
 //! duration conversion defaulted to zero for the version's seconds component.
 //!
-//! The completed seam integrates the extracted [`storage_fs::FsMetadataReader::inspect_file_metadata`]
+//! The completed seam integrates the extracted [`naust_storage_fs::FsMetadataReader::inspect_file_metadata`]
 //! API beneath the pinned root descriptor to obtain exact byte size and modification time for each
 //! selected candidate surviving lexical cursor filtering. Registry policy then applies the legacy
 //! conversion rules to construct full [`GcBlobCandidate`] instances:
@@ -43,9 +43,9 @@
 //! - **No Atomic Snapshot Under Mutation**: A single `fstat` result does not establish an atomic snapshot
 //!   of all attributes under concurrent mutation, nor does it guarantee snapshot isolation across multiple operations.
 //! - **Substituted Symlinks & Non-Regular Objects**: If a candidate is replaced with a symlink before inspection,
-//!   contained `openat2` resolution rejects it with [`storage_fs::FsMetadataError::ResolutionRejected`]
+//!   contained `openat2` resolution rejects it with [`naust_storage_fs::FsMetadataError::ResolutionRejected`]
 //!   (mapped to [`StorageErrorKind::Io`]). If replaced with a non-regular object (e.g. directory or FIFO),
-//!   inspection rejects it with [`storage_fs::FsMetadataError::UnsupportedObjectType`] (mapped to
+//!   inspection rejects it with [`naust_storage_fs::FsMetadataError::UnsupportedObjectType`] (mapped to
 //!   [`StorageErrorKind::CorruptData`]).
 //! - **Regular-File Replacement**: If an enumerated blob file is unlinked and replaced with a different regular
 //!   file of the same name before inspection, inspection succeeds and reports the replacement file's attributes
@@ -64,8 +64,8 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use storage_core::{ObjectKey, ReadError};
-use storage_fs::{DirEntryType, DirStream, FsDirError, FsFileMetadata};
+use naust_storage_core::{ObjectKey, ReadError};
+use naust_storage_fs::{DirEntryType, DirStream, FsDirError, FsFileMetadata};
 
 use crate::registry::digest::Digest;
 use crate::storage::{
@@ -74,7 +74,7 @@ use crate::storage::{
 
 /// Narrow registry-owned test abstraction for descriptor-relative directory enumeration.
 ///
-/// Enables exercising both the concrete [`storage_fs::FsMetadataReader`] and deterministic
+/// Enables exercising both the concrete [`naust_storage_fs::FsMetadataReader`] and deterministic
 /// recording fakes for failure injection.
 pub(crate) trait CasDirEnumerator: Send + Sync {
     /// Streams directory entries relative to the storage root descriptor with backpressure.
@@ -83,7 +83,7 @@ pub(crate) trait CasDirEnumerator: Send + Sync {
 
 /// Narrow registry-owned test abstraction for descriptor-relative file metadata inspection.
 ///
-/// Enables exercising both the concrete [`storage_fs::FsMetadataReader`] and deterministic
+/// Enables exercising both the concrete [`naust_storage_fs::FsMetadataReader`] and deterministic
 /// recording fakes for metadata inspection and failure injection.
 #[async_trait]
 pub(crate) trait CasMetadataInspector: Send + Sync {
@@ -95,14 +95,14 @@ pub(crate) trait CasMetadataInspector: Send + Sync {
 pub(crate) trait CasListingSource: CasDirEnumerator + CasMetadataInspector {}
 impl<T: CasDirEnumerator + CasMetadataInspector + ?Sized> CasListingSource for T {}
 
-impl CasDirEnumerator for storage_fs::FsMetadataReader {
+impl CasDirEnumerator for naust_storage_fs::FsMetadataReader {
     fn stream_dir(&self, target: Option<&ObjectKey>) -> Result<DirStream, FsDirError> {
         self.stream_dir(target)
     }
 }
 
 #[async_trait]
-impl CasMetadataInspector for storage_fs::FsMetadataReader {
+impl CasMetadataInspector for naust_storage_fs::FsMetadataReader {
     async fn inspect_file_metadata(&self, key: &ObjectKey) -> Result<FsFileMetadata, ReadError> {
         self.inspect_file_metadata(key).await
     }
@@ -168,7 +168,7 @@ pub(crate) fn translate_dir_error(err: FsDirError) -> StorageError {
     }
 }
 
-/// Translates strongly typed [`storage_core::ReadError`] inspection outcomes into [`StorageError`].
+/// Translates strongly typed [`naust_storage_core::ReadError`] inspection outcomes into [`StorageError`].
 ///
 /// Error classification is driven strictly by typed error variants and typed source downcasts;
 /// error message text is never parsed to determine the category.
@@ -198,38 +198,40 @@ pub(crate) fn translate_inspect_error(err: ReadError) -> StorageError {
             message, source, ..
         } => {
             if let Some(src) = source {
-                if let Some(fs_err) = src.downcast_ref::<storage_fs::FsMetadataError>() {
+                if let Some(fs_err) = src.downcast_ref::<naust_storage_fs::FsMetadataError>() {
                     match fs_err {
-                        storage_fs::FsMetadataError::ResolutionRejected { source, .. } => {
-                            StorageError::io(source.to_string())
-                        }
-                        storage_fs::FsMetadataError::UnsupportedObjectType { mode } => {
+                        naust_storage_fs::FsMetadataError::ResolutionRejected {
+                            source, ..
+                        } => StorageError::io(source.to_string()),
+                        naust_storage_fs::FsMetadataError::UnsupportedObjectType { mode } => {
                             StorageError::corrupt_data(format!(
                                 "unsupported object type (mode: {mode:#o})"
                             ))
                         }
-                        storage_fs::FsMetadataError::SyscallUnsupported(io_err) => {
+                        naust_storage_fs::FsMetadataError::SyscallUnsupported(io_err) => {
                             StorageError::configuration(format!(
                                 "openat2 is unavailable in this execution environment: {io_err}"
                             ))
                         }
-                        storage_fs::FsMetadataError::PlatformUnsupported => {
+                        naust_storage_fs::FsMetadataError::PlatformUnsupported => {
                             StorageError::configuration(
                                 "platform unsupported: descriptor-relative containment requires Linux openat2",
                             )
                         }
-                        storage_fs::FsMetadataError::StatFailed { stage, source } => {
+                        naust_storage_fs::FsMetadataError::StatFailed { stage, source } => {
                             StorageError::io(format!("failed to stat {stage} descriptor: {source}"))
                         }
-                        storage_fs::FsMetadataError::InvalidMetadata { message } => {
+                        naust_storage_fs::FsMetadataError::InvalidMetadata { message } => {
                             StorageError::corrupt_data(format!("invalid metadata: {message}"))
                         }
-                        storage_fs::FsMetadataError::RuntimeMissing(err) => {
+                        naust_storage_fs::FsMetadataError::RuntimeMissing(err) => {
                             StorageError::backend(format!("tokio runtime missing: {err}"))
                         }
-                        storage_fs::FsMetadataError::TaskJoinFailed(err) => StorageError::backend(
-                            format!("blocking metadata task join failed: {err}"),
-                        ),
+                        naust_storage_fs::FsMetadataError::TaskJoinFailed(err) => {
+                            StorageError::backend(format!(
+                                "blocking metadata task join failed: {err}"
+                            ))
+                        }
                         other => StorageError::io(other.to_string()),
                     }
                 } else if let Some(io_err) = src.downcast_ref::<std::io::Error>() {
@@ -493,10 +495,10 @@ pub(crate) fn default_test_budget() {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use naust_storage_fs::DirEntry;
     use std::collections::{HashMap, VecDeque};
     use std::sync::Mutex;
     use std::time::Duration;
-    use storage_fs::DirEntry;
 
     use crate::blob_gc::policy::{AgeEligibility, check_candidate_age};
     use crate::blob_gc::traverser::{CasBlobTraverser, GcPaginationError};
@@ -762,7 +764,7 @@ mod tests {
             fake.script(
                 Some(root_key.clone()),
                 Err(FsDirError::LimitExceeded {
-                    reason: storage_fs::LimitExceededReason::MaxEntries(5),
+                    reason: naust_storage_fs::LimitExceededReason::MaxEntries(5),
                 }),
             );
             let err = list_cas_blobs_page_seam(&fake, None, 10, default_test_budget())
@@ -1605,7 +1607,7 @@ mod tests {
         {
             let err = ReadError::backend_with_source(
                 "io error missing not found",
-                Box::new(storage_fs::FsMetadataError::UnsupportedObjectType {
+                Box::new(naust_storage_fs::FsMetadataError::UnsupportedObjectType {
                     mode: libc::S_IFDIR,
                 }),
             );
@@ -1623,7 +1625,7 @@ mod tests {
         {
             let err = ReadError::backend_with_source(
                 "corrupt invalid data",
-                Box::new(storage_fs::FsMetadataError::StatFailed {
+                Box::new(naust_storage_fs::FsMetadataError::StatFailed {
                     stage: "file inspection",
                     source: std::io::Error::from_raw_os_error(libc::EIO),
                 }),
@@ -1642,7 +1644,7 @@ mod tests {
         {
             let err = ReadError::backend_with_source(
                 "io read failure",
-                Box::new(storage_fs::FsMetadataError::InvalidMetadata {
+                Box::new(naust_storage_fs::FsMetadataError::InvalidMetadata {
                     message: "negative file size",
                 }),
             );
@@ -1660,7 +1662,7 @@ mod tests {
         {
             let err = ReadError::backend_with_source(
                 "io error",
-                Box::new(storage_fs::FsMetadataError::SyscallUnsupported(
+                Box::new(naust_storage_fs::FsMetadataError::SyscallUnsupported(
                     std::io::Error::from_raw_os_error(libc::ENOSYS),
                 )),
             );
@@ -1678,7 +1680,7 @@ mod tests {
         {
             let err = ReadError::backend_with_source(
                 "io error",
-                Box::new(storage_fs::FsMetadataError::PlatformUnsupported),
+                Box::new(naust_storage_fs::FsMetadataError::PlatformUnsupported),
             );
             let mapped = translate_inspect_error(err);
             match mapped {
@@ -1694,7 +1696,7 @@ mod tests {
         {
             let err = ReadError::backend_with_source(
                 "corrupt link",
-                Box::new(storage_fs::FsMetadataError::ResolutionRejected {
+                Box::new(naust_storage_fs::FsMetadataError::ResolutionRejected {
                     raw_os_error: libc::ELOOP,
                     source: std::io::Error::from_raw_os_error(libc::ELOOP),
                 }),
@@ -1745,7 +1747,7 @@ mod tests {
         fake.script(
             Some(shard_0b),
             Err(FsDirError::LimitExceeded {
-                reason: storage_fs::LimitExceededReason::MaxEntries(10),
+                reason: naust_storage_fs::LimitExceededReason::MaxEntries(10),
             }),
         );
 
@@ -1840,7 +1842,7 @@ mod tests {
         #[tokio::test]
         async fn test_real_fs_absent_cas_root_returns_empty_page() {
             let (_fixture, root) = create_test_root();
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let page = list_cas_blobs_page_seam(&reader, None, 100, default_test_budget())
                 .await
@@ -1853,7 +1855,7 @@ mod tests {
         async fn test_real_fs_empty_cas_root_returns_empty_page() {
             let (_fixture, root) = create_test_root();
             std::fs::create_dir_all(root.join("blobs").join("sha256")).unwrap();
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let page = list_cas_blobs_page_seam(&reader, None, 100, default_test_budget())
                 .await
@@ -1866,7 +1868,7 @@ mod tests {
         async fn test_real_fs_empty_shard_returns_empty_page() {
             let (_fixture, root) = create_test_root();
             std::fs::create_dir_all(root.join("blobs").join("sha256").join("0a")).unwrap();
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let page = list_cas_blobs_page_seam(&reader, None, 100, default_test_budget())
                 .await
@@ -1889,7 +1891,7 @@ mod tests {
                 put_blob(&root, hex, b"payload");
             }
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             // Page 1 (limit 2): hexes[0], hexes[1]
             let page1 = list_cas_blobs_page_seam(&reader, None, 2, default_test_budget())
@@ -1963,7 +1965,7 @@ mod tests {
                 put_blob(&root, hex, b"payload");
             }
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let page1 = list_cas_blobs_page_seam(&reader, None, 2, default_test_budget())
                 .await
@@ -1997,7 +1999,7 @@ mod tests {
             put_blob(&root, hex1, b"p1");
             put_blob(&root, hex2, b"p2");
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let page_zero = list_cas_blobs_page_seam(&reader, None, 0, default_test_budget())
                 .await
@@ -2013,7 +2015,7 @@ mod tests {
             let hex = "0a00000000000000000000000000000000000000000000000000000000000001";
             put_blob(&root, hex, b"p1");
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let cursor_zzz = GcCursor("zzz".into());
             let page_zzz =
@@ -2044,7 +2046,7 @@ mod tests {
             let link_shard = cas_root.join("2b");
             std::os::unix::fs::symlink(&target_shard, &link_shard).unwrap();
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let res = list_cas_blobs_page_seam(&reader, None, 10, default_test_budget()).await;
             assert!(res.is_err(), "symlinked shard directory must fail closed");
@@ -2073,7 +2075,7 @@ mod tests {
             let link_file = shard.join(valid_hex_name);
             std::os::unix::fs::symlink(&target_file, &link_file).unwrap();
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let res = list_cas_blobs_page_seam(&reader, None, 10, default_test_budget()).await;
             assert!(res.is_err(), "symlinked blob file must fail closed");
@@ -2094,7 +2096,7 @@ mod tests {
             let nested = shard.join("nested_subdir");
             std::fs::create_dir_all(&nested).unwrap();
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let res = list_cas_blobs_page_seam(&reader, None, 10, default_test_budget()).await;
             assert!(res.is_err(), "nested directory in shard must fail closed");
@@ -2119,7 +2121,7 @@ mod tests {
 
             std::os::unix::fs::symlink(&target_blobs, root.join("blobs")).unwrap();
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let res = list_cas_blobs_page_seam(&reader, None, 10, default_test_budget()).await;
             assert!(
@@ -2145,7 +2147,7 @@ mod tests {
             let (_fixture, root) = create_test_root();
             std::fs::write(root.join("blobs"), b"regular file not a directory").unwrap();
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let res = list_cas_blobs_page_seam(&reader, None, 10, default_test_budget()).await;
             assert!(
@@ -2172,7 +2174,7 @@ mod tests {
                 std::fs::write(shard_dir.join(hex), b"blob").unwrap();
             }
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let page = list_cas_blobs_page_impl(&reader, None, 10)
                 .await
@@ -2189,7 +2191,7 @@ mod tests {
             put_blob(&root, hex_0a, b"p_0a");
             put_blob(&root, hex_1b, b"p_1b");
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let page1 = list_cas_blobs_page_seam(&reader, None, 1, default_test_budget())
                 .await
@@ -2249,7 +2251,7 @@ mod tests {
             let fs_meta = std::fs::metadata(&blob_disk_path).expect("readback blob fs metadata");
             let fs_mtime = fs_meta.modified().expect("readback blob fs mtime");
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let page = list_cas_blobs_page_seam(&reader, None, 10, default_test_budget())
                 .await
                 .expect("listing succeeds");
@@ -2289,7 +2291,7 @@ mod tests {
             let hex = "0a00000000000000000000000000000000000000000000000000000000000001";
             put_blob(&root, hex, b"data to disappear");
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let blob_disk_path = root.join("blobs").join("sha256").join("0a").join(hex);
             let wrapper = InterceptingListingWrapper::new(&reader, move |_key| {
@@ -2324,7 +2326,7 @@ mod tests {
             let external_target = fixture.path().join("external_target.bin");
             std::fs::write(&external_target, b"external content").unwrap();
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let blob_disk_path = root.join("blobs").join("sha256").join("0a").join(hex);
             let wrapper = InterceptingListingWrapper::new(&reader, move |_key| {
@@ -2358,7 +2360,7 @@ mod tests {
             let hex = "0a00000000000000000000000000000000000000000000000000000000000001";
             put_blob(&root, hex, b"initial regular file");
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let blob_disk_path = root.join("blobs").join("sha256").join("0a").join(hex);
             let wrapper = InterceptingListingWrapper::new(&reader, move |_key| {
@@ -2434,7 +2436,7 @@ mod tests {
                 "held original file and replacement file must have distinct (dev, ino) identities"
             );
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let replacement_path_clone = replacement_path.clone();
             let blob_disk_path_clone = blob_disk_path.clone();
@@ -2492,7 +2494,7 @@ mod tests {
             let hex = "0a00000000000000000000000000000000000000000000000000000000000001";
             put_blob(&root, hex, b"blob in disappearing shard");
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let shard_disk_path = root.join("blobs").join("sha256").join("0a");
 
             let wrapper = InterceptingListingWrapper::with_enumerate_hook(&reader, move |target| {
@@ -2524,7 +2526,7 @@ mod tests {
             std::fs::write(blobs_dir.join("sha256"), b"not-a-directory")
                 .expect("write sha256 file");
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let err = list_cas_blobs_page_impl(&reader, None, 10)
                 .await
                 .expect_err("final non-directory component must fail closed with CorruptData");
@@ -2584,7 +2586,7 @@ mod tests {
                 panic!("ineffective permissions: read_dir succeeded on directory with mode 0o000");
             }
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let res = list_cas_blobs_page_impl(&reader, None, 10).await;
 
             let err = res.expect_err("permission denied on CAS root must fail closed");
@@ -2620,7 +2622,7 @@ mod tests {
                 std::fs::write(shard_dir.join(hex), b"blobdata").unwrap();
             }
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             let page1 = list_cas_blobs_page_impl(&reader, None, 50)
                 .await
@@ -2733,7 +2735,7 @@ mod tests {
             std::fs::write(dir.join(hex), content).unwrap();
         }
 
-        let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+        let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
         let bridge = SeamGcStorageBridge::new(&reader);
 
         // Run CasBlobTraverser with batch size 2
@@ -2954,7 +2956,7 @@ mod tests {
             other => panic!("expected Backend, got {other:?}"),
         }
 
-        let meta_err = storage_fs::FsMetadataError::RuntimeMissing(get_runtime_missing());
+        let meta_err = naust_storage_fs::FsMetadataError::RuntimeMissing(get_runtime_missing());
         let read_err =
             ReadError::backend_with_source("metadata runtime missing", Box::new(meta_err));
         let mapped_meta = translate_inspect_error(read_err);
@@ -2991,7 +2993,8 @@ mod tests {
         .await
         .unwrap_err();
 
-        let meta_join_err = storage_fs::FsMetadataError::TaskJoinFailed(genuine_join_error_meta);
+        let meta_join_err =
+            naust_storage_fs::FsMetadataError::TaskJoinFailed(genuine_join_error_meta);
         let read_err_join =
             ReadError::backend_with_source("metadata task join failed", Box::new(meta_join_err));
         let mapped_join_meta = translate_inspect_error(read_err_join);

@@ -6,9 +6,9 @@ use crate::storage::{StorageError, StorageErrorKind};
 
 pub(crate) use super::read_adapter::head_blob_seam;
 
-/// Translates strongly typed [`storage_core::ReadError`] outcomes into legacy [`StorageError`] taxonomy
+/// Translates strongly typed [`naust_storage_core::ReadError`] outcomes into legacy [`StorageError`] taxonomy
 /// by delegating to the shared [`super::read_adapter::translate_metadata_read_error`].
-pub(crate) fn translate_read_error(err: storage_core::ReadError) -> StorageError {
+pub(crate) fn translate_read_error(err: naust_storage_core::ReadError) -> StorageError {
     super::read_adapter::translate_metadata_read_error(err)
 }
 
@@ -16,9 +16,9 @@ pub(crate) fn translate_read_error(err: storage_core::ReadError) -> StorageError
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use naust_storage_core::{ObjectKey, ObjectMetadata, ObjectMetadataReader, ReadError};
     use std::collections::{HashMap, VecDeque};
     use std::sync::{Arc, Mutex};
-    use storage_core::{ObjectKey, ObjectMetadata, ObjectMetadataReader, ReadError};
 
     struct RecordingFakeReader {
         calls: Arc<Mutex<Vec<ObjectKey>>>,
@@ -221,7 +221,7 @@ mod tests {
 
         let underlying_io = std::io::Error::from_raw_os_error(libc::ELOOP);
         let expected_msg = underlying_io.to_string();
-        let fs_err = storage_fs::FsMetadataError::ResolutionRejected {
+        let fs_err = naust_storage_fs::FsMetadataError::ResolutionRejected {
             raw_os_error: libc::ELOOP,
             source: underlying_io,
         };
@@ -256,7 +256,7 @@ mod tests {
         )
         .unwrap();
 
-        let fs_err = storage_fs::FsMetadataError::UnsupportedObjectType { mode: 0o040755 };
+        let fs_err = naust_storage_fs::FsMetadataError::UnsupportedObjectType { mode: 0o040755 };
         fake.script(
             primary_key.clone(),
             Err(ReadError::backend_with_source(
@@ -289,7 +289,7 @@ mod tests {
         .unwrap();
 
         let underlying_io = std::io::Error::from_raw_os_error(libc::ENOSYS);
-        let fs_err = storage_fs::FsMetadataError::SyscallUnsupported(underlying_io);
+        let fs_err = naust_storage_fs::FsMetadataError::SyscallUnsupported(underlying_io);
         fake.script(
             primary_key.clone(),
             Err(ReadError::backend_with_source(
@@ -328,7 +328,7 @@ mod tests {
         };
 
         let try_current_err_str = try_current_err.to_string();
-        let fs_err = storage_fs::FsMetadataError::RuntimeMissing(try_current_err);
+        let fs_err = naust_storage_fs::FsMetadataError::RuntimeMissing(try_current_err);
         let expected_msg = fs_err.to_string();
         assert!(
             expected_msg.starts_with("tokio runtime required: "),
@@ -349,7 +349,8 @@ mod tests {
             .expect("join thread"),
             Err(e) => e,
         };
-        let fs_err_direct = storage_fs::FsMetadataError::RuntimeMissing(try_current_err_direct);
+        let fs_err_direct =
+            naust_storage_fs::FsMetadataError::RuntimeMissing(try_current_err_direct);
         let expected_msg_direct = fs_err_direct.to_string();
         let direct_err = translate_read_error(ReadError::backend_with_source(
             "tokio runtime missing",
@@ -447,7 +448,7 @@ mod tests {
             join_err.is_panic(),
             "constructed JoinError must represent a panic"
         );
-        let fs_err = storage_fs::FsMetadataError::TaskJoinFailed(join_err);
+        let fs_err = naust_storage_fs::FsMetadataError::TaskJoinFailed(join_err);
         let expected_msg = fs_err.to_string();
         assert!(
             expected_msg.starts_with("blocking metadata task failed: "),
@@ -455,7 +456,7 @@ mod tests {
         );
 
         // 1. Direct translation check
-        let fs_err_direct = storage_fs::FsMetadataError::TaskJoinFailed(join_err_direct);
+        let fs_err_direct = naust_storage_fs::FsMetadataError::TaskJoinFailed(join_err_direct);
         let expected_msg_direct = fs_err_direct.to_string();
         let direct_err = translate_read_error(ReadError::backend_with_source(
             "blocking task failed",
@@ -739,7 +740,7 @@ mod tests {
                 content,
             );
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let meta = head_blob_seam(&reader, &digest)
                 .await
                 .expect("head_blob_seam succeeds on real regular file");
@@ -752,7 +753,7 @@ mod tests {
             let digest =
                 test_digest("0202020202020202020202020202020202020202020202020202020202020202");
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let err = head_blob_seam(&reader, &digest)
                 .await
                 .expect_err("both missing must return NotFound");
@@ -771,7 +772,7 @@ mod tests {
                 content,
             );
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let meta = head_blob_seam(&reader, &digest)
                 .await
                 .expect("quarantine lookup succeeds when primary is missing");
@@ -790,7 +791,7 @@ mod tests {
             std::fs::create_dir_all(blob_path.parent().unwrap()).unwrap();
             std::os::unix::fs::symlink(&target, &blob_path).unwrap();
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let err = head_blob_seam(&reader, &digest)
                 .await
                 .expect_err("symlink inside root must be rejected");
@@ -814,7 +815,7 @@ mod tests {
             std::fs::create_dir_all(blob_path.parent().unwrap()).unwrap();
             std::os::unix::fs::symlink(&outside_target, &blob_path).unwrap();
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let err = head_blob_seam(&reader, &digest)
                 .await
                 .expect_err("symlink outside root must be rejected");
@@ -841,7 +842,7 @@ mod tests {
             std::fs::create_dir_all(&prefix_parent).unwrap();
             std::os::unix::fs::symlink(&real_dir, prefix_parent.join("06")).unwrap();
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let err = head_blob_seam(&reader, &digest)
                 .await
                 .expect_err("intermediate symlink must be rejected");
@@ -872,7 +873,7 @@ mod tests {
                 b"valid quarantine",
             );
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let err = head_blob_seam(&reader, &digest)
                 .await
                 .expect_err("dangling symlink on primary must NOT fall back to quarantine");
@@ -892,7 +893,7 @@ mod tests {
             );
             std::fs::create_dir_all(&dir_blob).unwrap();
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let err = head_blob_seam(&reader, &digest)
                 .await
                 .expect_err("directory object must be rejected");
@@ -926,7 +927,7 @@ mod tests {
                     let res = unsafe { libc::mkfifo(c_path.as_ptr(), 0o644) };
                     assert_eq!(res, 0, "mkfifo must succeed");
 
-                    let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+                    let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
                     let res = head_blob_seam(&reader, &digest).await;
                     tx.send(res).unwrap();
                 });
@@ -955,7 +956,7 @@ mod tests {
             std::fs::create_dir_all(qblob_path.parent().unwrap()).unwrap();
             std::os::unix::fs::symlink(&target, &qblob_path).unwrap();
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let err = head_blob_seam(&reader, &digest)
                 .await
                 .expect_err("quarantine symlink must be rejected");
@@ -973,7 +974,7 @@ mod tests {
             let qdir_path = root.join("quarantine/blobs/sha256/0b/0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b");
             std::fs::create_dir_all(&qdir_path).unwrap();
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let err = head_blob_seam(&reader, &digest)
                 .await
                 .expect_err("quarantine directory must be rejected");
@@ -999,7 +1000,7 @@ mod tests {
             );
 
             // Open descriptor to initial storage root
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             // Rename existing storage root and create a brand-new directory at original path
             let old_root = fixture.path().join("storage_root_old");

@@ -236,7 +236,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     use crate::storage::ports::{GcServiceStoragePort, GcStoragePort, ManifestReader};
     #[cfg(target_os = "linux")]
-    use storage_fs::DirEnumerationLimits;
+    use naust_storage_fs::DirEnumerationLimits;
 
     #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;

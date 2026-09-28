@@ -4,7 +4,7 @@
 //! The tag LISTING MECHANICS that previously lived here (the contained
 //! `contained_list_tags_seam` / `contained_list_tags_page_seam`
 //! implementations) migrated to the backend-neutral shared tag domain
-//! (`crate::storage::tag_domain`) over `storage_core::ObjectStore` in the
+//! (`crate::storage::tag_domain`) over `naust_storage_core::ObjectStore` in the
 //! Phase 3 tag-family cutover. What remains is deliberately NOT tag storage
 //! mechanics:
 //! - the configured [`TagListingLimits`] (wired into the FS object store's
@@ -19,9 +19,9 @@
 use crate::storage::StorageError;
 use crate::storage::tag_domain::{TagRepoProbe, validate_path_component};
 use async_trait::async_trait;
+use naust_storage_core::ObjectKey;
+use naust_storage_fs::{DirEnumerationLimits, FsDirError, FsMetadataReader};
 use std::sync::Arc;
-use storage_core::ObjectKey;
-use storage_fs::{DirEnumerationLimits, FsDirError, FsMetadataReader};
 
 /// Default maximum number of tag directory entries to enumerate during tag listing.
 pub const DEFAULT_TAG_LISTING_MAX_ENTRIES: usize = 10_000;
@@ -58,16 +58,16 @@ pub struct TagReadLimits {
 /// Configuration limits for tag listing and repository existence probing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagListingLimits {
-    pub repo_probe_limits: storage_fs::DirEnumerationLimits,
-    pub tags_dir_limits: storage_fs::DirEnumerationLimits,
+    pub repo_probe_limits: naust_storage_fs::DirEnumerationLimits,
+    pub tags_dir_limits: naust_storage_fs::DirEnumerationLimits,
     pub payload_limits: TagReadLimits,
 }
 
 impl Default for TagListingLimits {
     fn default() -> Self {
         Self {
-            repo_probe_limits: storage_fs::DirEnumerationLimits::new(usize::MAX, usize::MAX),
-            tags_dir_limits: storage_fs::DirEnumerationLimits::new(
+            repo_probe_limits: naust_storage_fs::DirEnumerationLimits::new(usize::MAX, usize::MAX),
+            tags_dir_limits: naust_storage_fs::DirEnumerationLimits::new(
                 DEFAULT_TAG_LISTING_MAX_ENTRIES,
                 DEFAULT_TAG_LISTING_MAX_NAME_BYTES,
             ),
@@ -81,8 +81,8 @@ impl Default for TagListingLimits {
 impl TagListingLimits {
     #[allow(dead_code)]
     pub fn new(
-        repo_probe_limits: storage_fs::DirEnumerationLimits,
-        tags_dir_limits: storage_fs::DirEnumerationLimits,
+        repo_probe_limits: naust_storage_fs::DirEnumerationLimits,
+        tags_dir_limits: naust_storage_fs::DirEnumerationLimits,
         payload_limits: TagReadLimits,
     ) -> Self {
         Self {
@@ -96,8 +96,8 @@ impl TagListingLimits {
     #[allow(dead_code)]
     pub fn unbounded() -> Self {
         Self {
-            repo_probe_limits: storage_fs::DirEnumerationLimits::new(usize::MAX, usize::MAX),
-            tags_dir_limits: storage_fs::DirEnumerationLimits::new(usize::MAX, usize::MAX),
+            repo_probe_limits: naust_storage_fs::DirEnumerationLimits::new(usize::MAX, usize::MAX),
+            tags_dir_limits: naust_storage_fs::DirEnumerationLimits::new(usize::MAX, usize::MAX),
             payload_limits: TagReadLimits {
                 max_payload_bytes: None,
             },
@@ -179,30 +179,30 @@ impl FsTagRepoProbe {
     }
 }
 
-fn translate_probe_error(err: storage_fs::FsMutateError, dir_key: &str) -> StorageError {
+fn translate_probe_error(err: naust_storage_fs::FsMutateError, dir_key: &str) -> StorageError {
     match err {
-        storage_fs::FsMutateError::NotFound => {
+        naust_storage_fs::FsMutateError::NotFound => {
             StorageError::io(format!("directory vanished before probe: {dir_key}"))
         }
-        storage_fs::FsMutateError::NotADirectory => {
+        naust_storage_fs::FsMutateError::NotADirectory => {
             StorageError::corrupt_data(format!("path is not a directory: {dir_key}"))
         }
-        storage_fs::FsMutateError::PermissionDenied => StorageError::permission_denied(format!(
-            "permission denied opening directory {dir_key}"
-        )),
-        storage_fs::FsMutateError::ResolutionRejected { raw_os_error } => StorageError::io(
+        naust_storage_fs::FsMutateError::PermissionDenied => StorageError::permission_denied(
+            format!("permission denied opening directory {dir_key}"),
+        ),
+        naust_storage_fs::FsMutateError::ResolutionRejected { raw_os_error } => StorageError::io(
             format!("path resolution rejected for directory {dir_key} (os error {raw_os_error:?})"),
         ),
-        storage_fs::FsMutateError::PlatformUnsupported => {
+        naust_storage_fs::FsMutateError::PlatformUnsupported => {
             StorageError::configuration(format!("platform unsupported for {dir_key}"))
         }
-        storage_fs::FsMutateError::Io(source) => {
+        naust_storage_fs::FsMutateError::Io(source) => {
             StorageError::io(format!("I/O error probing directory {dir_key}: {source}"))
         }
-        storage_fs::FsMutateError::RuntimeMissing(err) => StorageError::backend(format!(
+        naust_storage_fs::FsMutateError::RuntimeMissing(err) => StorageError::backend(format!(
             "tokio runtime missing during probe of {dir_key}: {err}"
         )),
-        storage_fs::FsMutateError::TaskJoinFailed(err) => {
+        naust_storage_fs::FsMutateError::TaskJoinFailed(err) => {
             StorageError::backend(format!("blocking task join failed for {dir_key}: {err}"))
         }
         other => StorageError::backend(format!(
@@ -226,8 +226,8 @@ impl TagRepoProbe for FsTagRepoProbe {
         }
         match self.reader.open_contained_dir(key.as_str()).await {
             Ok(_) => Ok(true),
-            Err(storage_fs::FsMutateError::NotFound) => Ok(false),
-            Err(storage_fs::FsMutateError::NotADirectory) => Ok(false),
+            Err(naust_storage_fs::FsMutateError::NotFound) => Ok(false),
+            Err(naust_storage_fs::FsMutateError::NotADirectory) => Ok(false),
             Err(err) => Err(translate_probe_error(err, key.as_str())),
         }
     }

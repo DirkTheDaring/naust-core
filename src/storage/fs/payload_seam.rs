@@ -2,8 +2,8 @@
 //! payload streaming against `naust` CAS semantics and quarantine orchestration.
 //!
 //! # Architectural Ownership Boundaries
-//! - `storage-core`: Defines domain-neutral contracts ([`storage_core::ObjectPayloadReader`],
-//!   [`storage_core::ObjectPayload`], [`storage_core::ObjectStream`], [`storage_core::ReadError`]).
+//! - `storage-core`: Defines domain-neutral contracts ([`naust_storage_core::ObjectPayloadReader`],
+//!   [`naust_storage_core::ObjectPayload`], [`naust_storage_core::ObjectStream`], [`naust_storage_core::ReadError`]).
 //! - `storage-fs`: Implements Linux descriptor-relative containment (`openat2` + `O_PATH`),
 //!   type validation (`S_IFREG`), and Phase 2 readable reopening via `/proc/self/fd/N`.
 //! - `naust`: Owns CAS digest layout rules (`blobs/` vs `quarantine/blobs/`),
@@ -16,17 +16,17 @@
 //! or allowed to trigger uncontained pathname fallbacks.
 //!
 //! # Error Taxonomy Mapping
-//! In `storage-core`, any failure other than [`storage_core::ReadError::NotFound`] or
-//! [`storage_core::ReadError::PermissionDenied`] is classified generically as [`storage_core::ReadError::Backend`].
+//! In `storage-core`, any failure other than [`naust_storage_core::ReadError::NotFound`] or
+//! [`naust_storage_core::ReadError::PermissionDenied`] is classified generically as [`naust_storage_core::ReadError::Backend`].
 //! In `naust`:
-//! - Local operating system syscall and descriptor failures ([`storage_fs::FsMetadataError::StatFailed`],
-//!   [`storage_fs::FsMetadataError::ProcfsReopenFailed`], [`storage_fs::FsMetadataError::IdentityMismatch`],
-//!   [`storage_fs::FsMetadataError::ResolutionRejected`], [`storage_fs::FsMetadataError::UnsupportedObjectType`],
-//!   [`storage_fs::FsMetadataError::InvalidMetadata`], [`storage_fs::FsMetadataError::PlatformUnsupported`])
+//! - Local operating system syscall and descriptor failures ([`naust_storage_fs::FsMetadataError::StatFailed`],
+//!   [`naust_storage_fs::FsMetadataError::ProcfsReopenFailed`], [`naust_storage_fs::FsMetadataError::IdentityMismatch`],
+//!   [`naust_storage_fs::FsMetadataError::ResolutionRejected`], [`naust_storage_fs::FsMetadataError::UnsupportedObjectType`],
+//!   [`naust_storage_fs::FsMetadataError::InvalidMetadata`], [`naust_storage_fs::FsMetadataError::PlatformUnsupported`])
 //!   map to [`StorageErrorKind::Io`].
-//! - Syscall unavailability ([`storage_fs::FsMetadataError::SyscallUnsupported`]) maps to [`StorageErrorKind::Configuration`].
-//! - Tokio runtime / task join failures ([`storage_fs::FsMetadataError::RuntimeMissing`],
-//!   [`storage_fs::FsMetadataError::TaskJoinFailed`]) map to [`StorageErrorKind::Backend`].
+//! - Syscall unavailability ([`naust_storage_fs::FsMetadataError::SyscallUnsupported`]) maps to [`StorageErrorKind::Configuration`].
+//! - Tokio runtime / task join failures ([`naust_storage_fs::FsMetadataError::RuntimeMissing`],
+//!   [`naust_storage_fs::FsMetadataError::TaskJoinFailed`]) map to [`StorageErrorKind::Backend`].
 //! - Boxed error source chains do not survive translation into [`StorageError::Internal`], which stores only
 //!   `kind: StorageErrorKind` and `message: String`. Useful diagnostic text is preserved within the message.
 
@@ -37,10 +37,10 @@ use tokio::io::AsyncRead;
 
 pub(crate) use super::read_adapter::open_blob_seam;
 
-/// Translates strongly typed [`storage_core::ReadError`] outcomes into legacy [`StorageError`] taxonomy
+/// Translates strongly typed [`naust_storage_core::ReadError`] outcomes into legacy [`StorageError`] taxonomy
 /// by delegating to the shared [`super::read_adapter::translate_payload_read_error`].
 #[allow(dead_code)] // Preserved for symmetry with metadata_seam translation helper
-pub(crate) fn translate_read_error(err: storage_core::ReadError) -> StorageError {
+pub(crate) fn translate_read_error(err: naust_storage_core::ReadError) -> StorageError {
     super::read_adapter::translate_payload_read_error(err)
 }
 
@@ -48,12 +48,12 @@ pub(crate) fn translate_read_error(err: storage_core::ReadError) -> StorageError
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use naust_storage_core::{
+        ObjectKey, ObjectMetadata, ObjectPayload, ObjectPayloadReader, ObjectStream, ReadError,
+    };
     use std::collections::{HashMap, VecDeque};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
-    use storage_core::{
-        ObjectKey, ObjectMetadata, ObjectPayload, ObjectPayloadReader, ObjectStream, ReadError,
-    };
     use tokio::io::AsyncReadExt;
 
     struct RecordingFakePayloadReader {
@@ -281,7 +281,7 @@ mod tests {
         )
         .unwrap();
 
-        let fs_err = storage_fs::FsMetadataError::ResolutionRejected {
+        let fs_err = naust_storage_fs::FsMetadataError::ResolutionRejected {
             raw_os_error: libc::ELOOP,
             source: std::io::Error::from_raw_os_error(libc::ELOOP),
         };
@@ -314,7 +314,7 @@ mod tests {
         )
         .unwrap();
 
-        let fs_err = storage_fs::FsMetadataError::UnsupportedObjectType {
+        let fs_err = naust_storage_fs::FsMetadataError::UnsupportedObjectType {
             mode: libc::S_IFDIR as u32,
         };
         fake.script(
@@ -349,7 +349,7 @@ mod tests {
         )
         .unwrap();
 
-        let fs_err = storage_fs::FsMetadataError::StatFailed {
+        let fs_err = naust_storage_fs::FsMetadataError::StatFailed {
             stage: "Phase 1 contained",
             source: std::io::Error::from_raw_os_error(libc::EIO),
         };
@@ -392,7 +392,7 @@ mod tests {
             .unwrap();
 
             // Note: synthetic error fixture demonstrating Phase 2 procfs reopen failure handling.
-            let fs_err = storage_fs::FsMetadataError::ProcfsReopenFailed {
+            let fs_err = naust_storage_fs::FsMetadataError::ProcfsReopenFailed {
                 source: std::io::Error::from_raw_os_error(err_code),
             };
             fake.script(
@@ -440,7 +440,7 @@ mod tests {
         .unwrap();
 
         // Note: synthetic error fixture demonstrating identity mismatch handling.
-        let fs_err = storage_fs::FsMetadataError::IdentityMismatch {
+        let fs_err = naust_storage_fs::FsMetadataError::IdentityMismatch {
             expected_dev: 10,
             expected_ino: 20,
             actual_dev: 10,
@@ -481,7 +481,7 @@ mod tests {
             Err(e) => e,
         };
 
-        let fs_err = storage_fs::FsMetadataError::RuntimeMissing(try_current_err);
+        let fs_err = naust_storage_fs::FsMetadataError::RuntimeMissing(try_current_err);
         let expected_msg = fs_err.to_string();
 
         let fake = RecordingFakePayloadReader::new();
@@ -530,7 +530,7 @@ mod tests {
         });
 
         assert!(join_err.is_panic());
-        let fs_err = storage_fs::FsMetadataError::TaskJoinFailed(join_err);
+        let fs_err = naust_storage_fs::FsMetadataError::TaskJoinFailed(join_err);
         let expected_msg = fs_err.to_string();
 
         rt.block_on(async {
@@ -575,7 +575,7 @@ mod tests {
         )
         .unwrap();
 
-        let fs_err = storage_fs::FsMetadataError::SyscallUnsupported(
+        let fs_err = naust_storage_fs::FsMetadataError::SyscallUnsupported(
             std::io::Error::from_raw_os_error(libc::ENOSYS),
         );
         fake.script(
@@ -776,7 +776,7 @@ mod tests {
                 content,
             );
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let (meta, mut stream) = open_blob_seam(&reader, &digest)
                 .await
                 .expect("open_blob_seam succeeds on real primary blob");
@@ -802,7 +802,7 @@ mod tests {
                 content,
             );
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let (meta, mut stream) = open_blob_seam(&reader, &digest)
                 .await
                 .expect("quarantine fallback succeeds when primary is missing");
@@ -828,7 +828,7 @@ mod tests {
                 content,
             );
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let (meta, mut stream) = open_blob_seam(&reader, &digest)
                 .await
                 .expect("open_blob_seam succeeds");
@@ -868,7 +868,7 @@ mod tests {
                 b"valid quarantine blob that must not be accessed",
             );
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let err = expect_seam_err(
                 open_blob_seam(&reader, &digest).await,
                 "containment failure on primary must suppress quarantine",
@@ -898,7 +898,7 @@ mod tests {
                 b"valid quarantine blob that must not be accessed",
             );
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
             let err = expect_seam_err(
                 open_blob_seam(&reader, &digest).await,
                 "directory on primary must suppress quarantine",
@@ -925,7 +925,7 @@ mod tests {
             );
 
             // Open reader once against initial storage root
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open root reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader");
 
             // Rename storage root and create a brand-new empty directory at original path
             let old_root = fixture.path().join("storage_root_old");

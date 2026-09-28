@@ -21,8 +21,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use storage_core::ObjectKey;
-use storage_core::object_store::{
+use naust_storage_core::ObjectKey;
+use naust_storage_core::object_store::{
     ConditionalDeleteOutcome, CreateOutcome, Durability, ListPage, ObjectMeta, ObjectRead,
     ObjectStore, ObjectVersion, PageToken, ReplaceOutcome, StoreError, VersionedRead,
 };
@@ -957,14 +957,14 @@ fn raw_stores() -> Vec<(&'static str, tempfile::TempDir, Arc<dyn ObjectStore>)> 
     out.push((
         "fs",
         tmp,
-        Arc::new(storage_fs::FsObjectStore::open(&root).unwrap()),
+        Arc::new(naust_storage_fs::FsObjectStore::open(&root).unwrap()),
     ));
     let tmp2 = tempfile::tempdir().unwrap();
-    let client = Arc::new(storage_s3::mock::MockS3Client::new());
+    let client = Arc::new(naust_storage_s3::mock::MockS3Client::new());
     out.push((
         "s3",
         tmp2,
-        Arc::new(storage_s3::S3ObjectStore::new(client, None).unwrap()),
+        Arc::new(naust_storage_s3::S3ObjectStore::new(client, None).unwrap()),
     ));
     out
 }
@@ -1366,7 +1366,7 @@ async fn fs_symlink_fail_closed() {
 /// failed durable directory barrier propagates truthfully.
 #[tokio::test]
 async fn fs_enospc_and_durability_classification() {
-    use storage_fs::mutate::fault::{self, FaultPoint};
+    use naust_storage_fs::mutate::fault::{self, FaultPoint};
 
     let _fault_guard = crate::storage::store_common::fault_scenario::begin().await;
     let tmp = tempfile::tempdir().unwrap();

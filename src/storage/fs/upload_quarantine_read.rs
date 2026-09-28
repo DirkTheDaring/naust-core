@@ -6,7 +6,7 @@
 //! Implements the three standalone inspection point reads behind
 //! `FsStorage::quarantined_blob_version`, `FsStorage::read_quarantine_timestamp`,
 //! and `FsStorage::get_finalized_receipt`, all over the shared pinned
-//! [`storage_fs::FsMetadataReader`] via the existing
+//! [`naust_storage_fs::FsMetadataReader`] via the existing
 //! [`super::membership_read::MembershipReadOps`] seam (`open_payload`,
 //! `inspect_file_metadata`; blocking work on the dependency's `spawn_blocking`
 //! offload; no ambient fallback after a contained failure).
@@ -86,8 +86,8 @@
 
 use std::time::SystemTime;
 
+use naust_storage_core::{ObjectKey, ReadError};
 use sha2::Digest as Sha2Digest;
-use storage_core::{ObjectKey, ReadError};
 use tokio::io::AsyncReadExt;
 
 use super::membership_read::MembershipReadOps;
@@ -118,8 +118,8 @@ fn inspection_confirms_non_regular(err: &ReadError) -> bool {
             source: Some(source),
             ..
         } => matches!(
-            source.downcast_ref::<storage_fs::FsMetadataError>(),
-            Some(storage_fs::FsMetadataError::UnsupportedObjectType { .. })
+            source.downcast_ref::<naust_storage_fs::FsMetadataError>(),
+            Some(naust_storage_fs::FsMetadataError::UnsupportedObjectType { .. })
         ),
         _ => false,
     }
@@ -278,10 +278,10 @@ mod tests {
     use crate::registry::canonical_name::CanonicalRepoName;
     use crate::storage::StorageErrorKind;
     use async_trait::async_trait;
+    use naust_storage_core::{ObjectMetadata, ObjectPayload, ObjectStream};
+    use naust_storage_fs::{DirEntry, DirEnumerationLimits, FsDirError, FsFileMetadata};
     use std::collections::{HashMap, VecDeque};
     use std::sync::{Arc, Mutex};
-    use storage_core::{ObjectMetadata, ObjectPayload, ObjectStream};
-    use storage_fs::{DirEntry, DirEnumerationLimits, FsDirError, FsFileMetadata};
 
     struct RecordingFakeOps {
         payload_calls: Arc<Mutex<Vec<ObjectKey>>>,
@@ -369,7 +369,7 @@ mod tests {
     fn rejection(code: i32) -> ReadError {
         ReadError::backend_with_source(
             "resolution rejected",
-            Box::new(storage_fs::FsMetadataError::ResolutionRejected {
+            Box::new(naust_storage_fs::FsMetadataError::ResolutionRejected {
                 raw_os_error: code,
                 source: std::io::Error::from_raw_os_error(code),
             }),

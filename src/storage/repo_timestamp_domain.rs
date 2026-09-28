@@ -40,8 +40,8 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use storage_core::ObjectKey;
-use storage_core::object_store::{ObjectStore, StoreError};
+use naust_storage_core::ObjectKey;
+use naust_storage_core::object_store::{ObjectStore, StoreError};
 
 use crate::storage::tag_domain::TagRepoProbe;
 

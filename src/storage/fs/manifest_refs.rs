@@ -5,7 +5,7 @@
 //! This module implements contained manifest reference collection for filesystem
 //! garbage collection reachability in `naust`. It enumerates terminal directories
 //! discovered by [`super::repo_discovery::discover_manifest_dirs_impl`], reads manifest payloads
-//! using the pinned root descriptor via [`storage_fs::FsMetadataReader`], and extracts protected digests.
+//! using the pinned root descriptor via [`naust_storage_fs::FsMetadataReader`], and extracts protected digests.
 //!
 //! # Contract and Topology
 //!
@@ -24,9 +24,9 @@
 //!   zero partial successful sets are returned.
 
 use async_trait::async_trait;
+use naust_storage_core::{ObjectKey, ObjectPayloadReader, ReadError};
+use naust_storage_fs::{DirEntryType, DirEnumerationLimits, FsDirError, FsMetadataError};
 use std::collections::HashSet;
-use storage_core::{ObjectKey, ObjectPayloadReader, ReadError};
-use storage_fs::{DirEntryType, DirEnumerationLimits, FsDirError, FsMetadataError};
 use tokio::io::AsyncReadExt;
 
 use crate::manifest_refs::parse_manifest_refs;
@@ -543,12 +543,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use naust_storage_core::{ObjectMetadata, ObjectPayload, ObjectStream};
+    use naust_storage_fs::DirEntry;
     use std::collections::{HashMap, VecDeque};
     use std::ffi::OsString;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
-    use storage_core::{ObjectMetadata, ObjectPayload, ObjectStream};
-    use storage_fs::DirEntry;
     use tokio::io::AsyncRead;
 
     /// Deterministic recording fake reader for discovery, enumeration, and payload opening.
@@ -1090,7 +1090,7 @@ mod tests {
         fake4.script_dir(
             Some(&dir),
             Err(FsDirError::LimitExceeded {
-                reason: storage_fs::LimitExceededReason::MaxEntries(100),
+                reason: naust_storage_fs::LimitExceededReason::MaxEntries(100),
             }),
         );
         let err4 = collect_manifest_references_impl(&fake4, &[dir.clone()], limits.clone())
@@ -2125,7 +2125,7 @@ mod tests {
         std::fs::write(reserved_manifests.join(hex3), sample_manifest_json(layer3)).unwrap();
 
         // 3. Open single FsMetadataReader
-        let reader = storage_fs::FsMetadataReader::open(&root).expect("open reader");
+        let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open reader");
 
         let discovery_limits = super::super::repo_discovery::DiscoveryTestLimits::test_default();
         let ref_limits = ManifestReferenceTestLimits::test_default();
@@ -2177,7 +2177,7 @@ mod tests {
             manifests_dir.join("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
         std::os::unix::fs::symlink(&target_file, &symlink_path).unwrap();
 
-        let reader = storage_fs::FsMetadataReader::open(&root).expect("open reader");
+        let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open reader");
         let terminal = ObjectKey::parse("repos/app/manifests").unwrap();
         let limits = ManifestReferenceTestLimits::test_default();
 
@@ -2207,7 +2207,7 @@ mod tests {
         )
         .unwrap();
 
-        let reader = storage_fs::FsMetadataReader::open(&root).expect("open reader");
+        let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open reader");
 
         // Rename original root and create replacement with different contents
         let renamed = fixture.path().join("storage_root_old");
@@ -2279,7 +2279,7 @@ mod tests {
             denied_perms.set_mode(0o000);
             std::fs::set_permissions(&restricted, denied_perms).expect("chmod 000");
 
-            let reader = storage_fs::FsMetadataReader::open(&root).expect("open reader");
+            let reader = naust_storage_fs::FsMetadataReader::open(&root).expect("open reader");
             let terminal = ObjectKey::parse("repos/restricted/manifests").unwrap();
             let limits = ManifestReferenceTestLimits::test_default();
 

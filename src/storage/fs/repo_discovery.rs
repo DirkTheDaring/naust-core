@@ -4,7 +4,7 @@
 //!
 //! This module implements bounded breadth-first manifest-directory discovery for
 //! filesystem garbage collection reachability in `naust`. Traversal executes
-//! beneath the pinned storage root descriptor via [`storage_fs::FsMetadataReader`].
+//! beneath the pinned storage root descriptor via [`naust_storage_fs::FsMetadataReader`].
 //!
 //! # Discovery Contract
 //!
@@ -18,7 +18,7 @@
 //! - **Terminal Leaves**: Directories named `manifests` are recorded as terminal leaves
 //!   without opening or traversing their contents. This includes root-adjacent
 //!   `repos/manifests`.
-//! - **Containment**: Uses `storage_fs::FsMetadataReader::enumerate_dir` beneath a pinned
+//! - **Containment**: Uses `naust_storage_fs::FsMetadataReader::enumerate_dir` beneath a pinned
 //!   root directory descriptor via [`DiscoveryDirEnumerator`].
 //!
 //! # Clarifications & Architectural Guarantees
@@ -77,8 +77,8 @@
 use std::collections::VecDeque;
 
 use async_trait::async_trait;
-use storage_core::ObjectKey;
-use storage_fs::{DirEntry, DirEnumerationLimits, FsDirError, FsMetadataReader};
+use naust_storage_core::ObjectKey;
+use naust_storage_fs::{DirEntry, DirEnumerationLimits, FsDirError, FsMetadataReader};
 
 use crate::storage::StorageError;
 
@@ -430,10 +430,10 @@ pub(crate) async fn discover_manifest_dirs_impl(
 
             // Entry policy: symlinks, regular files, other types, and any future variants are skipped.
             match entry.file_type() {
-                storage_fs::DirEntryType::Directory => {}
-                storage_fs::DirEntryType::Symlink
-                | storage_fs::DirEntryType::Regular
-                | storage_fs::DirEntryType::Other
+                naust_storage_fs::DirEntryType::Directory => {}
+                naust_storage_fs::DirEntryType::Symlink
+                | naust_storage_fs::DirEntryType::Regular
+                | naust_storage_fs::DirEntryType::Other
                 | _ => continue,
             }
 
@@ -487,10 +487,10 @@ pub(crate) async fn discover_manifest_dirs_impl(
 mod tests {
     use super::*;
     use crate::storage::StorageErrorKind;
+    use naust_storage_fs::{DirEntryType, LimitExceededReason};
     use std::collections::HashMap;
     use std::ffi::OsString;
     use std::sync::{Arc, Mutex};
-    use storage_fs::{DirEntryType, LimitExceededReason};
 
     // --- Deterministic Fake Enumerator ---
 

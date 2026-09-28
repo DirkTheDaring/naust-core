@@ -50,8 +50,8 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use storage_core::ObjectKey;
-use storage_core::object_store::{Durability, ObjectStore, StoreError};
+use naust_storage_core::ObjectKey;
+use naust_storage_core::object_store::{Durability, ObjectStore, StoreError};
 
 use crate::registry::canonical_name::CanonicalRepoName;
 

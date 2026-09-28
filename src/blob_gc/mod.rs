@@ -394,7 +394,7 @@ async fn blob_gc_delete_fs_with_authority(
     quarantine_delay: Duration,
     limits: BlobGcLimits,
 ) -> Result<BlobGcStats, BlobGcError> {
-    use storage_fs::{DirEntryType, FileName, FsMutateError};
+    use naust_storage_fs::{DirEntryType, FileName, FsMutateError};
 
     let mut policy_ctx = PolicyContext::build(storage, idx, policy).await?;
     let mut stats = BlobGcStats::default();
@@ -408,7 +408,7 @@ async fn blob_gc_delete_fs_with_authority(
 
     // Pin the sweep root once (contained, non-creating). A missing storage
     // root preserves the prior empty-sweep contract.
-    let sweep_root = match storage_fs::FsMetadataReader::open(&fs_root)
+    let sweep_root = match naust_storage_fs::FsMetadataReader::open(&fs_root)
         .map_err(|e| io::Error::other(e.to_string()))
         .and_then(|r| {
             r.open_contained_dir_sync("")
@@ -758,30 +758,30 @@ fn quarantine_meta_path(fs_root: &std::path::Path, digest: &Digest) -> PathBuf {
 /// Map a contained-primitive error into the `std::io::Error` payload carried by
 /// the frozen `BlobGcError::Fs*` variants (preserving the underlying error for
 /// `Io`, the `NotFound` kind for absence, and a descriptive message otherwise).
-fn fs_mutate_to_io(err: storage_fs::FsMutateError) -> std::io::Error {
+fn fs_mutate_to_io(err: naust_storage_fs::FsMutateError) -> std::io::Error {
     match err {
-        storage_fs::FsMutateError::Io(e) => e,
-        storage_fs::FsMutateError::NotFound => {
+        naust_storage_fs::FsMutateError::Io(e) => e,
+        naust_storage_fs::FsMutateError::NotFound => {
             std::io::Error::new(std::io::ErrorKind::NotFound, "contained target not found")
         }
         other => std::io::Error::other(other.to_string()),
     }
 }
 
-fn fs_dir_to_io(err: storage_fs::FsDirError) -> std::io::Error {
+fn fs_dir_to_io(err: naust_storage_fs::FsDirError) -> std::io::Error {
     match err {
-        storage_fs::FsDirError::Io { source } => source,
+        naust_storage_fs::FsDirError::Io { source } => source,
         other => std::io::Error::other(other.to_string()),
     }
 }
 
 async fn write_quarantine_time(
-    root: &storage_fs::ContainedDir,
+    root: &naust_storage_fs::ContainedDir,
     fs_root: &std::path::Path,
     digest: &Digest,
     at: SystemTime,
 ) -> Result<(), BlobGcError> {
-    use storage_fs::FileName;
+    use naust_storage_fs::FileName;
 
     // Pathnames are used only in error reports; all directory creation and the
     // write resolve fd-relative beneath the pinned sweep root.
@@ -826,11 +826,11 @@ async fn write_quarantine_time(
 }
 
 async fn read_quarantine_time(
-    root: &storage_fs::ContainedDir,
+    root: &naust_storage_fs::ContainedDir,
     fs_root: &std::path::Path,
     digest: &Digest,
 ) -> Result<Option<SystemTime>, BlobGcError> {
-    use storage_fs::{FileName, FsMutateError};
+    use naust_storage_fs::{FileName, FsMutateError};
 
     // Narrow error-handling contract for this quarantine-age safety check
     // (the read resolves fd-relative beneath the pinned sweep root; the
@@ -913,7 +913,7 @@ mod tests {
         let path = quarantine_meta_path(&fs_root, &digest);
 
         // Pinned sweep root, as blob_gc_delete_fs_with_authority resolves it.
-        let root = storage_fs::FsMetadataReader::open(&fs_root)
+        let root = naust_storage_fs::FsMetadataReader::open(&fs_root)
             .unwrap()
             .open_contained_dir_sync("")
             .unwrap();

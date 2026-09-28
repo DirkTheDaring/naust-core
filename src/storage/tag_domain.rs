@@ -59,12 +59,12 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sha2::Digest as Sha2Digest;
-use storage_core::ObjectKey;
-use storage_core::object_store::{
+use naust_storage_core::ObjectKey;
+use naust_storage_core::object_store::{
     ConditionalDeleteOutcome, CreateOutcome, Durability, ObjectStore, ReplaceOutcome, StoreError,
     adapter,
 };
+use sha2::Digest as Sha2Digest;
 
 use crate::registry::digest::Digest;
 
@@ -526,7 +526,7 @@ pub(crate) mod test_hooks {
 /// shape):
 ///
 /// 1. one observation yields raw bytes AND the backend-private
-///    [`storage_core::object_store::ObjectVersion`] of the same generation;
+///    [`naust_storage_core::object_store::ObjectVersion`] of the same generation;
 /// 2. the registry computes its raw-byte SHA-256 token from those bytes;
 /// 3. a caller mismatch → `PreconditionFailed { current_version }` (no
 ///    delete is attempted);

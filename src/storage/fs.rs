@@ -10,12 +10,12 @@ use crate::storage::repo_membership::RepositoryBlobMembershipStorage;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::StreamExt;
+use naust_storage_fs::{BlockingDir, ContainedDir, FileName, FsMutateError, LeafWriteMode};
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use storage_fs::{BlockingDir, ContainedDir, FileName, FsMutateError, LeafWriteMode};
 #[cfg(test)]
 use tokio::io::AsyncReadExt;
 use tokio::io::{AsyncRead, AsyncWriteExt};
@@ -275,7 +275,7 @@ impl UploadAuthorities {
     /// required), so it is usable from the synchronous `FsStorage` constructors.
     /// No subtree directories are created here: each is pinned lazily-once by its
     /// accessor, resolving beneath the pinned root inode.
-    fn capture(reader: &storage_fs::FsMetadataReader) -> Result<Self, StorageError> {
+    fn capture(reader: &naust_storage_fs::FsMetadataReader) -> Result<Self, StorageError> {
         let root = reader
             .open_contained_dir_sync("")
             .map_err(map_fs_mutate_startup_err)?;
@@ -402,11 +402,11 @@ fn map_fs_mutate_err(err: FsMutateError) -> StorageError {
     }
 }
 
-fn map_fs_dir_err(err: storage_fs::FsDirError) -> StorageError {
+fn map_fs_dir_err(err: naust_storage_fs::FsDirError) -> StorageError {
     match err {
-        storage_fs::FsDirError::Io { source } => map_fs_io_err(source),
-        storage_fs::FsDirError::PermissionDenied { source, .. } => map_fs_io_err(source),
-        storage_fs::FsDirError::SyscallUnsupported(e) => map_fs_io_err(e),
+        naust_storage_fs::FsDirError::Io { source } => map_fs_io_err(source),
+        naust_storage_fs::FsDirError::PermissionDenied { source, .. } => map_fs_io_err(source),
+        naust_storage_fs::FsDirError::SyscallUnsupported(e) => map_fs_io_err(e),
         other => StorageError::io(other.to_string()),
     }
 }
@@ -417,8 +417,9 @@ pub struct FsStorage {
     max_upload_bytes: u64,
     upload_hashes: Vec<Mutex<std::collections::HashMap<String, SerializableSha256>>>,
     repo_locks: std::sync::Mutex<std::collections::HashMap<String, std::fs::File>>,
-    reader: std::sync::Arc<storage_fs::FsMetadataReader>,
-    read_adapter: std::sync::Arc<read_adapter::FsBlobCasReadAdapter<storage_fs::FsMetadataReader>>,
+    reader: std::sync::Arc<naust_storage_fs::FsMetadataReader>,
+    read_adapter:
+        std::sync::Arc<read_adapter::FsBlobCasReadAdapter<naust_storage_fs::FsMetadataReader>>,
     /// Pinned contained directory authorities shared by every upload-lifecycle
     /// operation (Option A). Captured once at construction; see `UploadAuthorities`.
     upload_authorities: std::sync::Arc<UploadAuthorities>,
@@ -509,7 +510,7 @@ impl FsStorage {
     pub fn try_new_with_all_limits(
         root: PathBuf,
         max_upload_bytes: u64,
-        manifest_listing_limits: storage_fs::DirEnumerationLimits,
+        manifest_listing_limits: naust_storage_fs::DirEnumerationLimits,
         gc_discovery_limits: repo_discovery::DiscoveryLimits,
         gc_ref_limits: manifest_refs::ManifestReferenceLimits,
         tag_listing_limits: tag_listing::TagListingLimits,
@@ -652,7 +653,7 @@ impl FsStorage {
         }
 
         ensure_dir(&root)?;
-        let reader = storage_fs::FsMetadataReader::open(&root)
+        let reader = naust_storage_fs::FsMetadataReader::open(&root)
             .map_err(read_adapter::map_fs_startup_error)?;
         reader
             .probe_capability()
@@ -669,7 +670,7 @@ impl FsStorage {
         // limits, and wire the shared tag domain over it. The repository
         // existence probe reuses the contained metadata reader — repository
         // existence is repository-family state, deferred to a later phase.
-        let tag_store = storage_fs::FsObjectStore::open(&root)
+        let tag_store = naust_storage_fs::FsObjectStore::open(&root)
             .map_err(|e| StorageError::io(format!("open tag object store root: {e}")))?;
         let tag_domain = crate::storage::tag_domain::TagDomain::new(
             std::sync::Arc::new(tag_store),
@@ -690,7 +691,7 @@ impl FsStorage {
         // the SAME root, budgeted with the configured manifest listing
         // limits (each migrated family keeps its own configured enumeration
         // budget).
-        let manifest_store = storage_fs::FsObjectStore::open(&root)
+        let manifest_store = naust_storage_fs::FsObjectStore::open(&root)
             .map_err(|e| StorageError::io(format!("open manifest object store root: {e}")))?;
         let manifest_domain = crate::storage::manifest_domain::ManifestDomain::new(
             std::sync::Arc::new(manifest_store),
@@ -704,7 +705,7 @@ impl FsStorage {
         // at `repos/<repo>/referrers/<hex>.json`). Referrers never enumerate
         // a namespace, so no enumeration budget is configured; index reads
         // preserve the historical unbounded contract inside the domain.
-        let referrer_store = storage_fs::FsObjectStore::open(&root)
+        let referrer_store = naust_storage_fs::FsObjectStore::open(&root)
             .map_err(|e| StorageError::io(format!("open referrer object store root: {e}")))?;
         let referrer_domain = crate::storage::referrer_domain::ReferrerDomain::new(
             std::sync::Arc::new(referrer_store),
@@ -715,7 +716,7 @@ impl FsStorage {
         // pinned object store over the SAME root (identity key mapping). No
         // enumeration budget — the migrated point operations never list; the
         // deferred enumeration seams keep their own bounds.
-        let membership_store = storage_fs::FsObjectStore::open(&root)
+        let membership_store = naust_storage_fs::FsObjectStore::open(&root)
             .map_err(|e| StorageError::io(format!("open membership object store root: {e}")))?;
         let membership_domain = crate::storage::membership_domain::MembershipDomain::new(
             std::sync::Arc::new(membership_store),
@@ -725,7 +726,7 @@ impl FsStorage {
         // the SAME root (identity key mapping). Journals never enumerate, so
         // no enumeration budget is configured; reads preserve the historical
         // unbounded contract inside the domain.
-        let journal_store = storage_fs::FsObjectStore::open(&root)
+        let journal_store = naust_storage_fs::FsObjectStore::open(&root)
             .map_err(|e| StorageError::io(format!("open journal object store root: {e}")))?;
         let journal_domain =
             crate::storage::journal_domain::JournalDomain::new(std::sync::Arc::new(journal_store));
@@ -735,7 +736,7 @@ impl FsStorage {
         // frozen "no approved limit covers these operations" baseline), and
         // the real contained repository-existence probe (the accepted
         // Phase 3 pattern — repository existence remains a backend notion).
-        let timestamp_store = storage_fs::FsObjectStore::open(&root)
+        let timestamp_store = naust_storage_fs::FsObjectStore::open(&root)
             .map_err(|e| StorageError::io(format!("open timestamp object store root: {e}")))?;
         let repo_timestamp_domain = crate::storage::repo_timestamp_domain::RepoTimestampDomain::new(
             std::sync::Arc::new(timestamp_store),
@@ -780,7 +781,7 @@ impl FsStorage {
     pub(crate) fn try_new_with_gc_limits(
         root: PathBuf,
         max_upload_bytes: u64,
-        manifest_listing_limits: storage_fs::DirEnumerationLimits,
+        manifest_listing_limits: naust_storage_fs::DirEnumerationLimits,
         gc_discovery_limits: repo_discovery::DiscoveryLimits,
         gc_ref_limits: manifest_refs::ManifestReferenceLimits,
     ) -> Result<Self, StorageError> {
@@ -797,7 +798,7 @@ impl FsStorage {
     pub fn try_new_with_limits(
         root: PathBuf,
         max_upload_bytes: u64,
-        limits: storage_fs::DirEnumerationLimits,
+        limits: naust_storage_fs::DirEnumerationLimits,
     ) -> Result<Self, StorageError> {
         Self::try_new_with_gc_limits(
             root,
@@ -827,14 +828,15 @@ impl FsStorage {
     #[doc(hidden)] // white-box window for wiring tests; curated in plan Phase 3
     pub fn read_adapter(
         &self,
-    ) -> &std::sync::Arc<read_adapter::FsBlobCasReadAdapter<storage_fs::FsMetadataReader>> {
+    ) -> &std::sync::Arc<read_adapter::FsBlobCasReadAdapter<naust_storage_fs::FsMetadataReader>>
+    {
         &self.read_adapter
     }
 
     /// Returns a reference to the shared root metadata reader.
     #[cfg(any(test, feature = "test-mocks"))]
     #[doc(hidden)] // white-box window for wiring tests; curated in plan Phase 3
-    pub fn reader(&self) -> &std::sync::Arc<storage_fs::FsMetadataReader> {
+    pub fn reader(&self) -> &std::sync::Arc<naust_storage_fs::FsMetadataReader> {
         &self.reader
     }
 
@@ -1994,7 +1996,7 @@ fn write_membership_sync(
 fn cas_blob_present_sync(
     blobs: &BlockingDir,
     digest: &Digest,
-) -> Result<Option<storage_fs::FsFileIdentity>, FsMutateError> {
+) -> Result<Option<naust_storage_fs::FsFileIdentity>, FsMutateError> {
     let algo = match blobs.open_subdir(&FileName::new(digest.algorithm())?) {
         Ok(d) => d,
         Err(FsMutateError::NotFound) => return Ok(None),

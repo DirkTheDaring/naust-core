@@ -1,7 +1,7 @@
 //! Shared helpers for translating backend-neutral [`StoreError`]s into the
 //! registry taxonomy — pieces common to every migrated object family.
 
-use storage_core::object_store::StoreError;
+use naust_storage_core::object_store::StoreError;
 
 /// Structured detection of an exhausted-storage failure (`ENOSPC` /
 /// `StorageFull`) anywhere in a backend error's source chain.
@@ -66,13 +66,13 @@ pub(crate) mod fault_scenario {
     /// stale armed rules so the scenario starts from a clean table.
     pub(crate) async fn begin() -> FaultScenario {
         let lock = SCENARIO_LOCK.lock().await;
-        storage_fs::mutate::fault::reset();
+        naust_storage_fs::mutate::fault::reset();
         FaultScenario { _lock: lock }
     }
 
     impl Drop for FaultScenario {
         fn drop(&mut self) {
-            storage_fs::mutate::fault::reset();
+            naust_storage_fs::mutate::fault::reset();
         }
     }
 }

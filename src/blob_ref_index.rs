@@ -3159,7 +3159,7 @@ mod tests {
         let storage = FsStorage::try_new_with_limits(
             root.clone(),
             1024 * 1024,
-            storage_fs::DirEnumerationLimits::new(1, 100_000),
+            naust_storage_fs::DirEnumerationLimits::new(1, 100_000),
         )
         .expect("create fs storage");
 

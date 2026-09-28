@@ -31,9 +31,9 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "fs"
 tokio-util = { version = "0.7", features = ["io", "rt"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
-storage-core = { path = "../storage-layer-rust/crates/storage-core" }
-storage-fs = { path = "../storage-layer-rust/crates/storage-fs" }
-storage-s3 = { path = "../storage-layer-rust/crates/storage-s3" }
+naust-storage-core = { path = "../storage-layer-rust/crates/naust-storage-core" }
+naust-storage-fs = { path = "../storage-layer-rust/crates/naust-storage-fs" }
+naust-storage-s3 = { path = "../storage-layer-rust/crates/naust-storage-s3" }
 
 [dev-dependencies]
 tempfile = "3"
@@ -41,10 +41,10 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 # Enable the dependency's deterministic fault-injection seam for tests ONLY. With the
 # edition-2024 resolver, dev-dependency features are not unified into normal builds, so
 # production `FsStorage` never contains the seam.
-storage-fs = { path = "../storage-layer-rust/crates/storage-fs", features = ["fault-injection"] }
+naust-storage-fs = { path = "../storage-layer-rust/crates/naust-storage-fs", features = ["fault-injection"] }
 # The deterministic in-memory S3 client mock drives the real S3ObjectStore adapter in
 # registry tag tests without an S3 endpoint. Dev-only; never unified into normal builds.
-storage-s3 = { path = "../storage-layer-rust/crates/storage-s3", features = ["mock-client"] }
+naust-storage-s3 = { path = "../storage-layer-rust/crates/naust-storage-s3", features = ["mock-client"] }
 
 [features]
 # Expose deterministic test doubles (S3 mock driver, FS test helpers) to

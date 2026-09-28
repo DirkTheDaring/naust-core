@@ -2294,7 +2294,7 @@ async fn test_fs_get_finalized_receipt_after_uploads_replacement_uses_pin() {
 //
 // These drive the dependency's `write_leaf_atomic` primitive through the
 // production membership/finalize paths and inject faults at each internal step
-// via the opt-in `storage_fs::mutate::fault` seam (enabled ONLY through the
+// via the opt-in `naust_storage_fs::mutate::fault` seam (enabled ONLY through the
 // registry dev-dependency; production builds never contain it). The global fault
 // registry is shared process-wide, so these tests serialize on a dedicated lock
 // and reset the table before and after each case.
@@ -2323,7 +2323,7 @@ async fn test_fault_scenario_serializes_and_preserves_armed_rules() {
     use crate::storage::repo_membership::{
         RepoBlobMembershipRecord, RepositoryBlobMembershipStorage,
     };
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
 
     let scenario = fault_test_guard().await;
 
@@ -2374,7 +2374,7 @@ async fn test_fault_scenario_serializes_and_preserves_armed_rules() {
 /// own expected fault.
 #[tokio::test]
 async fn test_fault_scenario_root_anchored_needle_does_not_cross_roots() {
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
 
     let _g = fault_test_guard().await;
 
@@ -2415,7 +2415,7 @@ async fn test_fault_scenario_drop_clears_unconsumed_rules() {
     use crate::storage::repo_membership::{
         RepoBlobMembershipRecord, RepositoryBlobMembershipStorage,
     };
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
 
     let root = tmp_fs_root();
     let storage = FsStorage::new(root.clone(), 1024 * 1024);
@@ -2443,7 +2443,7 @@ async fn test_fault_scenario_panic_clears_rules_and_does_not_poison() {
     use crate::storage::repo_membership::{
         RepoBlobMembershipRecord, RepositoryBlobMembershipStorage,
     };
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
 
     let root = tmp_fs_root();
     let storage = FsStorage::new(root.clone(), 1024 * 1024);
@@ -2490,7 +2490,7 @@ async fn test_fs_atomic_primary_write_failure_surfaces_and_leaves_no_destination
     use crate::storage::repo_membership::{
         RepoBlobMembershipRecord, RepositoryBlobMembershipStorage,
     };
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
     let _g = fault_test_guard().await;
 
     let root = tmp_fs_root();
@@ -2513,7 +2513,7 @@ async fn test_fs_atomic_primary_write_failure_surfaces_and_leaves_no_destination
         "a failed publication must not publish a destination record"
     );
 
-    storage_fs::mutate::fault::reset();
+    naust_storage_fs::mutate::fault::reset();
 }
 
 /// Rename failure with prior-destination preservation: when the publish `renameat`
@@ -2524,7 +2524,7 @@ async fn test_fs_atomic_rename_failure_preserves_prior_destination() {
     use crate::storage::repo_membership::{
         MembershipState, RepoBlobMembershipRecord, RepositoryBlobMembershipStorage,
     };
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
     let _g = fault_test_guard().await;
 
     let root = tmp_fs_root();
@@ -2565,7 +2565,7 @@ async fn test_fs_atomic_rename_failure_preserves_prior_destination() {
         "the failed write must leave no temp residual: {leftovers:?}"
     );
 
-    storage_fs::mutate::fault::reset();
+    naust_storage_fs::mutate::fault::reset();
 }
 
 /// A failed publication leaves the OBJECT directory free of any staging
@@ -2580,7 +2580,7 @@ async fn test_fs_atomic_secondary_cleanup_failure_surfaces() {
     use crate::storage::repo_membership::{
         RepoBlobMembershipRecord, RepositoryBlobMembershipStorage,
     };
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
     let _g = fault_test_guard().await;
 
     let root = tmp_fs_root();
@@ -2613,7 +2613,7 @@ async fn test_fs_atomic_secondary_cleanup_failure_surfaces() {
         "the object directory must never contain staging residue: {leftovers:?}"
     );
 
-    storage_fs::mutate::fault::reset();
+    naust_storage_fs::mutate::fault::reset();
 }
 
 /// Retry after a transient write failure heals: once the injected fault is cleared, a
@@ -2623,7 +2623,7 @@ async fn test_fs_atomic_write_failure_retry_heals() {
     use crate::storage::repo_membership::{
         RepoBlobMembershipRecord, RepositoryBlobMembershipStorage,
     };
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
     let _g = fault_test_guard().await;
 
     let root = tmp_fs_root();
@@ -2647,7 +2647,7 @@ async fn test_fs_atomic_write_failure_retry_heals() {
         "a retry after the transient fault clears must publish the record"
     );
 
-    storage_fs::mutate::fault::reset();
+    naust_storage_fs::mutate::fault::reset();
 }
 
 /// End-to-end honest propagation: a write fault injected on the membership record
@@ -2655,7 +2655,7 @@ async fn test_fs_atomic_write_failure_retry_heals() {
 /// demonstrating that per-step write failures are surfaced rather than suppressed.
 #[tokio::test]
 async fn test_fs_commit_finalize_membership_write_failure_is_surfaced() {
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
     let _g = fault_test_guard().await;
 
     let root = tmp_fs_root();
@@ -2679,7 +2679,7 @@ async fn test_fs_commit_finalize_membership_write_failure_is_surfaced() {
         "no finalized receipt is published when the membership write fails"
     );
 
-    storage_fs::mutate::fault::reset();
+    naust_storage_fs::mutate::fault::reset();
 }
 
 // --------------------------------------------------------------------------
@@ -2720,7 +2720,7 @@ async fn append_n(storage: &FsStorage, session: &UploadSessionId, appends: u64) 
 /// after clearing the fault completes the abort.
 #[tokio::test]
 async fn test_fs_abort_data_unlink_failure_preserves_meta_and_retries() {
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
     let _g = fault_test_guard().await;
 
     let root = tmp_fs_root();
@@ -2756,7 +2756,7 @@ async fn test_fs_abort_data_unlink_failure_preserves_meta_and_retries() {
     );
 
     // Clearing the fault and retrying completes the abort.
-    storage_fs::mutate::fault::reset();
+    naust_storage_fs::mutate::fault::reset();
     storage.abort_session(&session).await.unwrap();
     assert!(!meta_path.exists(), "retry removes the meta");
     assert!(!data_path.exists(), "retry removes the data leaf");
@@ -2769,7 +2769,7 @@ async fn test_fs_abort_data_unlink_failure_preserves_meta_and_retries() {
 /// meta is preserved and only the failed generation remains; a retry heals it.
 #[tokio::test]
 async fn test_fs_abort_hash_unlink_failure_after_earlier_deletion_preserves_meta() {
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
     let _g = fault_test_guard().await;
 
     let root = tmp_fs_root();
@@ -2818,7 +2818,7 @@ async fn test_fs_abort_hash_unlink_failure_after_earlier_deletion_preserves_meta
     assert!(h2.exists(), "the generation whose unlink failed remains");
 
     // Retry after clearing the fault completes the abort (window is re-derived).
-    storage_fs::mutate::fault::reset();
+    naust_storage_fs::mutate::fault::reset();
     storage.abort_session(&session).await.unwrap();
     assert!(
         !meta_path.exists() && !h2.exists(),
@@ -2887,7 +2887,7 @@ async fn test_fs_abort_removes_sparse_later_hash_generations() {
 /// per-candidate failure, logged and skipped, never a confirmed cleanup.
 #[tokio::test]
 async fn test_fs_reaper_does_not_count_incomplete_abort() {
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
     let _g = fault_test_guard().await;
 
     let root = tmp_fs_root();
@@ -2916,7 +2916,7 @@ async fn test_fs_reaper_does_not_count_incomplete_abort() {
         "the session survives an incomplete reaper abort and stays recoverable"
     );
 
-    storage_fs::mutate::fault::reset();
+    naust_storage_fs::mutate::fault::reset();
 }
 
 /// Out-of-window residual from a REAL append old-hash unlink failure. This is the
@@ -2928,7 +2928,7 @@ async fn test_fs_reaper_does_not_count_incomplete_abort() {
 /// The scan-based abort must still remove it.
 #[tokio::test]
 async fn test_fs_abort_removes_residual_generation_from_real_append_unlink_failure() {
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
     let _g = fault_test_guard().await;
 
     let root = tmp_fs_root();
@@ -2954,7 +2954,7 @@ async fn test_fs_abort_removes_residual_generation_from_real_append_unlink_failu
         )
         .await
         .expect("append commits even though the suppressed old-hash cleanup failed");
-    storage_fs::mutate::fault::reset();
+    naust_storage_fs::mutate::fault::reset();
 
     // Append 1 -> 2 with normal cleanup: `hash.2` written, meta generation 2, `hash.1`
     // removed. The recorded generation is now 2, so the OLD window {G-1,G,G+1}={1,2,3}
@@ -3016,7 +3016,7 @@ async fn test_fs_abort_removes_residual_generation_from_real_append_unlink_failu
 /// covers the second suppressed-cleanup site rather than the out-of-window case.)
 #[tokio::test]
 async fn test_fs_abort_removes_residual_generation_from_real_finalize_unlink_failure() {
-    use storage_fs::mutate::fault::{FaultPoint, arm};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
     let _g = fault_test_guard().await;
 
     let root = tmp_fs_root();
@@ -3058,7 +3058,7 @@ async fn test_fs_abort_removes_residual_generation_from_real_finalize_unlink_fai
         )
         .await
         .expect("begin_finalize prepares even though the suppressed old-hash cleanup failed");
-    storage_fs::mutate::fault::reset();
+    naust_storage_fs::mutate::fault::reset();
 
     let (h1, h2) = (
         storage.session_hash_path(&uuid, 1),
@@ -5471,57 +5471,57 @@ fn test_production_read_cutover_startup_error_mapping_categories_and_diagnostics
     use crate::storage::fs::read_adapter::map_fs_startup_error;
 
     // 1. PlatformUnsupported -> StorageErrorKind::Configuration
-    let err = map_fs_startup_error(storage_fs::FsMetadataError::PlatformUnsupported);
+    let err = map_fs_startup_error(naust_storage_fs::FsMetadataError::PlatformUnsupported);
     assert_eq!(err.internal_kind(), Some(StorageErrorKind::Configuration));
     assert!(err.to_string().contains("platform unsupported"));
 
     // 2. SyscallUnsupported -> StorageErrorKind::Configuration
-    let err = map_fs_startup_error(storage_fs::FsMetadataError::SyscallUnsupported(
+    let err = map_fs_startup_error(naust_storage_fs::FsMetadataError::SyscallUnsupported(
         std::io::Error::from_raw_os_error(libc::ENOSYS),
     ));
     assert_eq!(err.internal_kind(), Some(StorageErrorKind::Configuration));
     assert!(err.to_string().contains("openat2 is unavailable"));
 
     // 3. EmptyRootPath -> StorageErrorKind::Configuration
-    let err = map_fs_startup_error(storage_fs::FsMetadataError::EmptyRootPath);
+    let err = map_fs_startup_error(naust_storage_fs::FsMetadataError::EmptyRootPath);
     assert_eq!(err.internal_kind(), Some(StorageErrorKind::Configuration));
     assert!(err.to_string().contains("cannot be empty"));
 
     // 4. NulInRootPath -> StorageErrorKind::Configuration
-    let err = map_fs_startup_error(storage_fs::FsMetadataError::NulInRootPath);
+    let err = map_fs_startup_error(naust_storage_fs::FsMetadataError::NulInRootPath);
     assert_eq!(err.internal_kind(), Some(StorageErrorKind::Configuration));
     assert!(err.to_string().contains("embedded NUL byte"));
 
     // 5. UnsupportedObjectType -> StorageErrorKind::Configuration
-    let err = map_fs_startup_error(storage_fs::FsMetadataError::UnsupportedObjectType {
+    let err = map_fs_startup_error(naust_storage_fs::FsMetadataError::UnsupportedObjectType {
         mode: libc::S_IFREG as u32 | 0o644,
     });
     assert_eq!(err.internal_kind(), Some(StorageErrorKind::Configuration));
     assert!(err.to_string().contains("not a directory"));
 
     // 6. ProbeDenied -> StorageErrorKind::Backend
-    let err = map_fs_startup_error(storage_fs::FsMetadataError::ProbeDenied(
+    let err = map_fs_startup_error(naust_storage_fs::FsMetadataError::ProbeDenied(
         std::io::Error::from_raw_os_error(libc::EACCES),
     ));
     assert_eq!(err.internal_kind(), Some(StorageErrorKind::Backend));
     assert!(err.to_string().contains("probe denied"));
 
     // 7. ProbeFailed -> StorageErrorKind::Backend
-    let err = map_fs_startup_error(storage_fs::FsMetadataError::ProbeFailed {
+    let err = map_fs_startup_error(naust_storage_fs::FsMetadataError::ProbeFailed {
         source: std::io::Error::from_raw_os_error(libc::EMFILE),
     });
     assert_eq!(err.internal_kind(), Some(StorageErrorKind::Backend));
     assert!(err.to_string().contains("probe failed"));
 
     // 8. RootOpenFailed -> StorageErrorKind::Io
-    let err = map_fs_startup_error(storage_fs::FsMetadataError::RootOpenFailed {
+    let err = map_fs_startup_error(naust_storage_fs::FsMetadataError::RootOpenFailed {
         source: std::io::Error::from_raw_os_error(libc::ENOENT),
     });
     assert_eq!(err.internal_kind(), Some(StorageErrorKind::Io));
     assert!(err.to_string().contains("failed to open root directory"));
 
     // 9. Conservative fallback for unexpected/non-exhaustive variants -> StorageErrorKind::Backend
-    let err = map_fs_startup_error(storage_fs::FsMetadataError::ResolutionRejected {
+    let err = map_fs_startup_error(naust_storage_fs::FsMetadataError::ResolutionRejected {
         raw_os_error: libc::ELOOP,
         source: std::io::Error::from_raw_os_error(libc::ELOOP),
     });
@@ -6497,7 +6497,7 @@ async fn test_manifest_read_repository_naming_single_and_multisegment() {
 
         // Compare with proposed relative ObjectKey representation
         let key_str = format!("repos/{repo}/manifests/{hex}");
-        let obj_key = storage_core::ObjectKey::parse(&key_str);
+        let obj_key = naust_storage_core::ObjectKey::parse(&key_str);
         assert!(
             obj_key.is_ok(),
             "ObjectKey::parse failed for '{key_str}': {obj_key:?}"
@@ -7757,7 +7757,7 @@ async fn test_manifest_listing_constructor_validation() {
     let err_entries = FsStorage::try_new_with_limits(
         root.clone(),
         1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(0, 1_500_000),
+        naust_storage_fs::DirEnumerationLimits::new(0, 1_500_000),
     )
     .expect_err("entries = 0 must fail constructor validation");
     assert_eq!(
@@ -7774,7 +7774,7 @@ async fn test_manifest_listing_constructor_validation() {
     let err_bytes = FsStorage::try_new_with_limits(
         root.clone(),
         1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(10_000, 127),
+        naust_storage_fs::DirEnumerationLimits::new(10_000, 127),
     )
     .expect_err("name_bytes = 127 must fail constructor validation");
     assert_eq!(
@@ -7793,7 +7793,7 @@ async fn test_manifest_listing_constructor_validation() {
     let storage_custom = FsStorage::try_new_with_limits(
         root.clone(),
         1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(2, 50_000),
+        naust_storage_fs::DirEnumerationLimits::new(2, 50_000),
     )
     .expect("valid limits succeed");
     let hexes = [
@@ -7845,7 +7845,7 @@ async fn test_manifest_listing_exact_entry_boundary() {
     let storage2 = FsStorage::try_new_with_limits(
         root.clone(),
         1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(2, 1_500_000),
+        naust_storage_fs::DirEnumerationLimits::new(2, 1_500_000),
     )
     .unwrap();
     let (items, _) = storage2
@@ -7858,7 +7858,7 @@ async fn test_manifest_listing_exact_entry_boundary() {
     let storage1 = FsStorage::try_new_with_limits(
         root.clone(),
         1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(1, 1_500_000),
+        naust_storage_fs::DirEnumerationLimits::new(1, 1_500_000),
     )
     .unwrap();
     let (items1, _) = storage1
@@ -7885,7 +7885,7 @@ async fn test_manifest_listing_exact_name_byte_boundary_including_128_byte_sha51
     let storage128 = FsStorage::try_new_with_limits(
         root.clone(),
         1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(100, 128),
+        naust_storage_fs::DirEnumerationLimits::new(100, 128),
     )
     .unwrap();
     let (items, _) = storage128
@@ -8557,7 +8557,7 @@ fn test_fs_storage_try_new_with_gc_limits_validation() {
         FsStorage::try_new_with_gc_limits(
             root.clone(),
             50 * 1024 * 1024,
-            storage_fs::DirEnumerationLimits::new(1000, 100_000),
+            naust_storage_fs::DirEnumerationLimits::new(1000, 100_000),
             super::repo_discovery::DiscoveryLimits::default(),
             super::manifest_refs::ManifestReferenceLimits::default(),
         )
@@ -8570,7 +8570,7 @@ fn test_fs_storage_try_new_with_gc_limits_validation() {
     let err = FsStorage::try_new_with_gc_limits(
         root.clone(),
         50 * 1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(1000, 100_000),
+        naust_storage_fs::DirEnumerationLimits::new(1000, 100_000),
         disc,
         super::manifest_refs::ManifestReferenceLimits::default(),
     )
@@ -8583,7 +8583,7 @@ fn test_fs_storage_try_new_with_gc_limits_validation() {
     let err = FsStorage::try_new_with_gc_limits(
         root.clone(),
         50 * 1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(1000, 100_000),
+        naust_storage_fs::DirEnumerationLimits::new(1000, 100_000),
         super::repo_discovery::DiscoveryLimits::default(),
         refs,
     )
@@ -8592,11 +8592,11 @@ fn test_fs_storage_try_new_with_gc_limits_validation() {
 
     // 4. terminal name bytes < 128
     let mut refs_name = super::manifest_refs::ManifestReferenceLimits::default();
-    refs_name.per_dir_limits = storage_fs::DirEnumerationLimits::new(1000, 64);
+    refs_name.per_dir_limits = naust_storage_fs::DirEnumerationLimits::new(1000, 64);
     let err = FsStorage::try_new_with_gc_limits(
         root.clone(),
         50 * 1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(1000, 100_000),
+        naust_storage_fs::DirEnumerationLimits::new(1000, 100_000),
         super::repo_discovery::DiscoveryLimits::default(),
         refs_name,
     )
@@ -10489,7 +10489,7 @@ async fn test_tag_listing_ignores_configured_manifest_enumeration_limits() {
     let storage = FsStorage::try_new_with_limits(
         root.clone(),
         1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(1, 128),
+        naust_storage_fs::DirEnumerationLimits::new(1, 128),
     )
     .unwrap();
 
@@ -10561,8 +10561,8 @@ async fn test_tag_listing_cutover_shared_reader_identity() {
     );
 
     let listing_limits = crate::storage::fs::tag_listing::TagListingLimits::new(
-        storage_fs::DirEnumerationLimits::new(64, 4096),
-        storage_fs::DirEnumerationLimits::new(1000, 100_000),
+        naust_storage_fs::DirEnumerationLimits::new(64, 4096),
+        naust_storage_fs::DirEnumerationLimits::new(1000, 100_000),
         crate::storage::fs::tag_listing::TagReadLimits {
             max_payload_bytes: Some(1024),
         },
@@ -10570,7 +10570,7 @@ async fn test_tag_listing_cutover_shared_reader_identity() {
     let storage_custom = FsStorage::try_new_with_all_limits(
         root.clone(),
         1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(1000, 100_000),
+        naust_storage_fs::DirEnumerationLimits::new(1000, 100_000),
         repo_discovery::DiscoveryLimits::default(),
         manifest_refs::ManifestReferenceLimits::default(),
         listing_limits.clone(),
@@ -10617,8 +10617,8 @@ async fn test_tag_listing_cutover_shared_reader_identity() {
 async fn test_tag_point_reads_share_configured_payload_ceiling() {
     let root = tmp_fs_root();
     let listing_limits = crate::storage::fs::tag_listing::TagListingLimits::new(
-        storage_fs::DirEnumerationLimits::new(64, 4096),
-        storage_fs::DirEnumerationLimits::new(1000, 100_000),
+        naust_storage_fs::DirEnumerationLimits::new(64, 4096),
+        naust_storage_fs::DirEnumerationLimits::new(1000, 100_000),
         crate::storage::fs::tag_listing::TagReadLimits {
             max_payload_bytes: Some(256),
         },
@@ -10626,7 +10626,7 @@ async fn test_tag_point_reads_share_configured_payload_ceiling() {
     let storage = FsStorage::try_new_with_all_limits(
         root.clone(),
         10 * 1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(1000, 100_000),
+        naust_storage_fs::DirEnumerationLimits::new(1000, 100_000),
         repo_discovery::DiscoveryLimits::default(),
         manifest_refs::ManifestReferenceLimits::default(),
         listing_limits,
@@ -10707,8 +10707,8 @@ async fn test_tag_point_reads_share_configured_payload_ceiling() {
 async fn test_tag_listing_zero_page_avoidance_and_offpage_failure() {
     let root = tmp_fs_root();
     let listing_limits = crate::storage::fs::tag_listing::TagListingLimits::new(
-        storage_fs::DirEnumerationLimits::new(64, 4096),
-        storage_fs::DirEnumerationLimits::new(1000, 100_000),
+        naust_storage_fs::DirEnumerationLimits::new(64, 4096),
+        naust_storage_fs::DirEnumerationLimits::new(1000, 100_000),
         crate::storage::fs::tag_listing::TagReadLimits {
             max_payload_bytes: Some(256),
         },
@@ -10716,7 +10716,7 @@ async fn test_tag_listing_zero_page_avoidance_and_offpage_failure() {
     let storage = FsStorage::try_new_with_all_limits(
         root.clone(),
         10 * 1024 * 1024,
-        storage_fs::DirEnumerationLimits::new(1000, 100_000),
+        naust_storage_fs::DirEnumerationLimits::new(1000, 100_000),
         repo_discovery::DiscoveryLimits::default(),
         manifest_refs::ManifestReferenceLimits::default(),
         listing_limits,
@@ -12772,7 +12772,7 @@ mod tag_mutation_write_characterization {
         assert_eq!(
             sorted_entry_names(&root),
             vec![
-                storage_fs::object_store::INTERNAL_DIR.to_string(),
+                naust_storage_fs::object_store::INTERNAL_DIR.to_string(),
                 "repos".to_string()
             ],
             "set_tag writes only under repos/ plus the store-internal tree"
@@ -13292,7 +13292,7 @@ mod tag_mutation_write_containment {
         assert_eq!(
             sorted_entry_names(&root),
             vec![
-                storage_fs::object_store::INTERNAL_DIR.to_string(),
+                naust_storage_fs::object_store::INTERNAL_DIR.to_string(),
                 "repos".to_string()
             ],
             "nothing written outside repos/ plus the store-internal tree"
@@ -15394,7 +15394,7 @@ mod gc_quarantine_containment {
     //             ON TREE A; replacement tree B untouched.
     #[tokio::test]
     async fn test_delete_same_authority_across_namespace_replacement() {
-        use storage_fs::FileName;
+        use naust_storage_fs::FileName;
 
         let root = tmp_fs_root();
         let storage = FsStorage::new(root.clone(), 1024 * 1024);
@@ -16354,8 +16354,8 @@ mod durability_barriers {
     use super::*;
     use crate::storage::mutation_authority::RuntimeMutationAuthority;
     use crate::storage::{GcQuarantineResult, GcStorage};
+    use naust_storage_fs::mutate::fault::{FaultPoint, arm};
     use std::os::unix::fs::{PermissionsExt as _, symlink};
-    use storage_fs::mutate::fault::{FaultPoint, arm};
 
     // A failed publication directory sync in commit_finalize propagates BEFORE
     // the membership/receipt writes: the CAS entry is already visible (rename
@@ -16423,7 +16423,7 @@ mod durability_barriers {
                 .is_some(),
             "receipt persisted on the healed retry"
         );
-        storage_fs::mutate::fault::reset();
+        naust_storage_fs::mutate::fault::reset();
     }
 
     // A failed directory sync in restore_quarantined_blob propagates while the
@@ -16505,7 +16505,7 @@ mod durability_barriers {
                 .exists(),
             "quarantine leaf gone (rename visible)"
         );
-        storage_fs::mutate::fault::reset();
+        naust_storage_fs::mutate::fault::reset();
     }
 
     // The lifecycle journal (authoritative GC-protection recovery state) is now

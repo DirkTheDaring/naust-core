@@ -58,8 +58,8 @@
 
 use std::sync::Arc;
 
-use storage_core::ObjectKey;
-use storage_core::object_store::{Durability, ObjectStore, StoreError, adapter};
+use naust_storage_core::ObjectKey;
+use naust_storage_core::object_store::{Durability, ObjectStore, StoreError, adapter};
 
 use crate::registry::digest::Digest;
 use crate::storage::tag_domain::TagDomain;

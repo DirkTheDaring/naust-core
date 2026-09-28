@@ -4,7 +4,7 @@
 //!
 //! Implements the production repository-catalog walk (`FsStorage::list_repo_names`,
 //! surfaced as `Storage::list_repositories`) beneath the pinned storage root
-//! descriptor via [`storage_fs::FsMetadataReader::enumerate_dir`]. It reuses the
+//! descriptor via [`naust_storage_fs::FsMetadataReader::enumerate_dir`]. It reuses the
 //! traversal mechanics of GC discovery ([`super::repo_discovery`]: enumerator
 //! seam, budget helpers, retained-path-byte tracker) while keeping the
 //! **catalog recognition policy**, which is intentionally distinct from GC
@@ -102,8 +102,8 @@
 
 use std::collections::VecDeque;
 
-use storage_core::ObjectKey;
-use storage_fs::{DirEnumerationLimits, FsDirError};
+use naust_storage_core::ObjectKey;
+use naust_storage_fs::{DirEnumerationLimits, FsDirError};
 
 use super::repo_discovery::{
     DiscoveryDirEnumerator, RetainedPathBytesTracker, checked_increment_depth,
@@ -280,7 +280,7 @@ pub(crate) async fn discover_catalog_repositories_impl(
             // symlinks, regular files, and other types are skipped (dirent-type
             // policy, matching the legacy `file_type.is_dir()` gate).
             match entry.file_type() {
-                storage_fs::DirEntryType::Directory => {}
+                naust_storage_fs::DirEntryType::Directory => {}
                 _ => continue,
             }
 
@@ -346,10 +346,10 @@ mod tests {
     use super::*;
     use crate::storage::StorageErrorKind;
     use async_trait::async_trait;
+    use naust_storage_fs::{DirEntry, DirEntryType};
     use std::collections::HashMap;
     use std::ffi::OsString;
     use std::sync::{Arc, Mutex};
-    use storage_fs::{DirEntry, DirEntryType};
 
     struct RecordingFakeEnumerator {
         calls: Arc<Mutex<Vec<(Option<ObjectKey>, DirEnumerationLimits)>>>,
@@ -697,7 +697,7 @@ mod tests {
         fake.script(
             Some(key("repos")),
             Err(FsDirError::LimitExceeded {
-                reason: storage_fs::LimitExceededReason::MaxEntries(10),
+                reason: naust_storage_fs::LimitExceededReason::MaxEntries(10),
             }),
         );
         let err = discover_catalog_repositories_impl(&fake, &limits)
@@ -1049,7 +1049,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     mod real_fs_tests {
         use super::*;
-        use storage_fs::FsMetadataReader;
+        use naust_storage_fs::FsMetadataReader;
 
         fn create_test_root() -> (tempfile::TempDir, std::path::PathBuf) {
             let fixture = tempfile::tempdir().expect("create tempdir");

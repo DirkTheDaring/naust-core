@@ -1,8 +1,8 @@
 //! Consolidated filesystem CAS blob read adapter for `naust`.
 //!
 //! Provides a unified [`BlobCasReader`] implementation wrapping extracted
-//! storage-layer readers ([`storage_core::ObjectMetadataReader`] and
-//! [`storage_core::ObjectPayloadReader`]) over an owned [`Arc<R>`].
+//! storage-layer readers ([`naust_storage_core::ObjectMetadataReader`] and
+//! [`naust_storage_core::ObjectPayloadReader`]) over an owned [`Arc<R>`].
 //!
 //! # Architectural Scope & Status
 //! This module consolidates metadata and payload seam logic into a single
@@ -20,32 +20,32 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio::io::AsyncRead;
 
-/// Translates strongly typed [`storage_fs::FsMetadataError`] startup and capability-probing
+/// Translates strongly typed [`naust_storage_fs::FsMetadataError`] startup and capability-probing
 /// failures into registry [`StorageError`] taxonomy.
-pub(crate) fn map_fs_startup_error(err: storage_fs::FsMetadataError) -> StorageError {
+pub(crate) fn map_fs_startup_error(err: naust_storage_fs::FsMetadataError) -> StorageError {
     match err {
-        storage_fs::FsMetadataError::PlatformUnsupported => StorageError::configuration(
+        naust_storage_fs::FsMetadataError::PlatformUnsupported => StorageError::configuration(
             "platform unsupported: descriptor-relative containment requires Linux openat2",
         ),
-        storage_fs::FsMetadataError::SyscallUnsupported(e) => StorageError::configuration(format!(
-            "openat2 is unavailable in this execution environment: {e}"
-        )),
-        storage_fs::FsMetadataError::EmptyRootPath => {
+        naust_storage_fs::FsMetadataError::SyscallUnsupported(e) => StorageError::configuration(
+            format!("openat2 is unavailable in this execution environment: {e}"),
+        ),
+        naust_storage_fs::FsMetadataError::EmptyRootPath => {
             StorageError::configuration("root path cannot be empty")
         }
-        storage_fs::FsMetadataError::NulInRootPath => {
+        naust_storage_fs::FsMetadataError::NulInRootPath => {
             StorageError::configuration("root path contains embedded NUL byte")
         }
-        storage_fs::FsMetadataError::UnsupportedObjectType { mode } => {
+        naust_storage_fs::FsMetadataError::UnsupportedObjectType { mode } => {
             StorageError::configuration(format!("root path is not a directory (mode: {mode:#o})"))
         }
-        storage_fs::FsMetadataError::ProbeDenied(e) => {
+        naust_storage_fs::FsMetadataError::ProbeDenied(e) => {
             StorageError::backend(format!("openat2 capability probe denied: {e}"))
         }
-        storage_fs::FsMetadataError::ProbeFailed { source } => {
+        naust_storage_fs::FsMetadataError::ProbeFailed { source } => {
             StorageError::backend(format!("openat2 capability probe failed: {source}"))
         }
-        storage_fs::FsMetadataError::RootOpenFailed { source } => {
+        naust_storage_fs::FsMetadataError::RootOpenFailed { source } => {
             StorageError::io(format!("failed to open root directory: {source}"))
         }
         // Documented conservative fallback: non-exhaustive variants or unexpected errors during
@@ -57,28 +57,30 @@ pub(crate) fn map_fs_startup_error(err: storage_fs::FsMetadataError) -> StorageE
 }
 
 /// Constructs the primary CAS object key for a blob digest: `blobs/<alg>/<prefix2>/<hex>`.
-pub(crate) fn blob_primary_key(digest: &Digest) -> Result<storage_core::ObjectKey, StorageError> {
+pub(crate) fn blob_primary_key(
+    digest: &Digest,
+) -> Result<naust_storage_core::ObjectKey, StorageError> {
     let key_str = format!(
         "blobs/{}/{}/{}",
         digest.algorithm(),
         digest.prefix2(),
         digest.hex()
     );
-    storage_core::ObjectKey::parse(&key_str)
+    naust_storage_core::ObjectKey::parse(&key_str)
         .map_err(|e| StorageError::internal(StorageErrorKind::InternalInvariant, e.to_string()))
 }
 
 /// Constructs the quarantine CAS object key for a blob digest: `quarantine/blobs/<alg>/<prefix2>/<hex>`.
 pub(crate) fn blob_quarantine_key(
     digest: &Digest,
-) -> Result<storage_core::ObjectKey, StorageError> {
+) -> Result<naust_storage_core::ObjectKey, StorageError> {
     let key_str = format!(
         "quarantine/blobs/{}/{}/{}",
         digest.algorithm(),
         digest.prefix2(),
         digest.hex()
     );
-    storage_core::ObjectKey::parse(&key_str)
+    naust_storage_core::ObjectKey::parse(&key_str)
         .map_err(|e| StorageError::internal(StorageErrorKind::InternalInvariant, e.to_string()))
 }
 
@@ -89,11 +91,11 @@ pub(crate) enum ReadOp {
     Payload,
 }
 
-/// Translates strongly typed [`storage_core::ReadError`] outcomes into legacy [`StorageError`] taxonomy.
-pub(crate) fn translate_read_error(err: storage_core::ReadError, op: ReadOp) -> StorageError {
+/// Translates strongly typed [`naust_storage_core::ReadError`] outcomes into legacy [`StorageError`] taxonomy.
+pub(crate) fn translate_read_error(err: naust_storage_core::ReadError, op: ReadOp) -> StorageError {
     match err {
-        storage_core::ReadError::NotFound { .. } => StorageError::NotFound,
-        storage_core::ReadError::PermissionDenied { ref source, .. } => {
+        naust_storage_core::ReadError::NotFound { .. } => StorageError::NotFound,
+        naust_storage_core::ReadError::PermissionDenied { ref source, .. } => {
             if let Some(src) = source {
                 if let Some(io_err) = src.downcast_ref::<std::io::Error>() {
                     return StorageError::io(io_err.to_string());
@@ -103,50 +105,54 @@ pub(crate) fn translate_read_error(err: storage_core::ReadError, op: ReadOp) -> 
                 StorageError::io("permission denied")
             }
         }
-        storage_core::ReadError::Backend {
+        naust_storage_core::ReadError::Backend {
             ref message,
             ref source,
             ..
         } => {
             if let Some(src) = source {
-                if let Some(fs_err) = src.downcast_ref::<storage_fs::FsMetadataError>() {
+                if let Some(fs_err) = src.downcast_ref::<naust_storage_fs::FsMetadataError>() {
                     match fs_err {
-                        storage_fs::FsMetadataError::ResolutionRejected { source, .. } => {
+                        naust_storage_fs::FsMetadataError::ResolutionRejected {
+                            source, ..
+                        } => {
                             return StorageError::io(source.to_string());
                         }
-                        storage_fs::FsMetadataError::UnsupportedObjectType { mode, .. } => {
+                        naust_storage_fs::FsMetadataError::UnsupportedObjectType {
+                            mode, ..
+                        } => {
                             return StorageError::io(format!(
                                 "unsupported object type (mode: {mode:#o})"
                             ));
                         }
-                        storage_fs::FsMetadataError::SyscallUnsupported(io_err) => {
+                        naust_storage_fs::FsMetadataError::SyscallUnsupported(io_err) => {
                             return StorageError::configuration(format!(
                                 "openat2 is unavailable in this execution environment: {io_err}"
                             ));
                         }
-                        storage_fs::FsMetadataError::StatFailed { stage, source } => {
+                        naust_storage_fs::FsMetadataError::StatFailed { stage, source } => {
                             return StorageError::io(format!(
                                 "failed to stat {stage} descriptor: {source}"
                             ));
                         }
-                        storage_fs::FsMetadataError::ProcfsReopenFailed { source } => {
+                        naust_storage_fs::FsMetadataError::ProcfsReopenFailed { source } => {
                             return StorageError::io(format!(
                                 "failed to reopen descriptor via procfs: {source}"
                             ));
                         }
-                        storage_fs::FsMetadataError::IdentityMismatch { .. } => {
+                        naust_storage_fs::FsMetadataError::IdentityMismatch { .. } => {
                             return StorageError::io(fs_err.to_string());
                         }
-                        storage_fs::FsMetadataError::InvalidMetadata { .. } => {
+                        naust_storage_fs::FsMetadataError::InvalidMetadata { .. } => {
                             return StorageError::io(fs_err.to_string());
                         }
-                        storage_fs::FsMetadataError::PlatformUnsupported => {
+                        naust_storage_fs::FsMetadataError::PlatformUnsupported => {
                             return StorageError::io(fs_err.to_string());
                         }
-                        storage_fs::FsMetadataError::RuntimeMissing(_) => {
+                        naust_storage_fs::FsMetadataError::RuntimeMissing(_) => {
                             return StorageError::backend(fs_err.to_string());
                         }
-                        storage_fs::FsMetadataError::TaskJoinFailed(_) => {
+                        naust_storage_fs::FsMetadataError::TaskJoinFailed(_) => {
                             return StorageError::backend(fs_err.to_string());
                         }
                         _ => return StorageError::io(fs_err.to_string()),
@@ -168,38 +174,38 @@ pub(crate) fn translate_read_error(err: storage_core::ReadError, op: ReadOp) -> 
 }
 
 /// Translates metadata read errors into [`StorageError`].
-pub(crate) fn translate_metadata_read_error(err: storage_core::ReadError) -> StorageError {
+pub(crate) fn translate_metadata_read_error(err: naust_storage_core::ReadError) -> StorageError {
     translate_read_error(err, ReadOp::Metadata)
 }
 
 /// Translates payload read errors into [`StorageError`].
-pub(crate) fn translate_payload_read_error(err: storage_core::ReadError) -> StorageError {
+pub(crate) fn translate_payload_read_error(err: naust_storage_core::ReadError) -> StorageError {
     translate_read_error(err, ReadOp::Payload)
 }
 
-/// Queries blob metadata via an [`storage_core::ObjectMetadataReader`].
+/// Queries blob metadata via an [`naust_storage_core::ObjectMetadataReader`].
 ///
 /// Implements two-stage digest resolution:
 /// 1. Primary lookup at `blobs/<algorithm>/<prefix2>/<hex>`.
 /// 2. Quarantine fallback at `quarantine/blobs/<algorithm>/<prefix2>/<hex>` **only** if the primary
-///    lookup returns [`storage_core::ReadError::NotFound`].
+///    lookup returns [`naust_storage_core::ReadError::NotFound`].
 ///
 /// Any other failure on primary immediately returns without attempting quarantine.
 /// Any failure on quarantine returns immediately without further lookup.
 pub(crate) async fn head_blob_seam(
-    reader: &(impl storage_core::ObjectMetadataReader + ?Sized),
+    reader: &(impl naust_storage_core::ObjectMetadataReader + ?Sized),
     digest: &Digest,
 ) -> Result<BlobMeta, StorageError> {
     let primary_key = blob_primary_key(digest)?;
 
     match reader.head(&primary_key).await {
         Ok(meta) => Ok(BlobMeta { size: meta.size() }),
-        Err(storage_core::ReadError::NotFound { .. }) => {
+        Err(naust_storage_core::ReadError::NotFound { .. }) => {
             let quarantine_key = blob_quarantine_key(digest)?;
 
             match reader.head(&quarantine_key).await {
                 Ok(meta) => Ok(BlobMeta { size: meta.size() }),
-                Err(storage_core::ReadError::NotFound { .. }) => Err(StorageError::NotFound),
+                Err(naust_storage_core::ReadError::NotFound { .. }) => Err(StorageError::NotFound),
                 Err(other) => Err(translate_metadata_read_error(other)),
             }
         }
@@ -207,12 +213,12 @@ pub(crate) async fn head_blob_seam(
     }
 }
 
-/// Acquires readable blob payload stream via an [`storage_core::ObjectPayloadReader`].
+/// Acquires readable blob payload stream via an [`naust_storage_core::ObjectPayloadReader`].
 ///
 /// Implements two-stage digest resolution:
 /// 1. Primary lookup at `blobs/<algorithm>/<prefix2>/<hex>`.
 /// 2. Quarantine fallback at `quarantine/blobs/<algorithm>/<prefix2>/<hex>` **only** if the primary
-///    lookup returns [`storage_core::ReadError::NotFound`].
+///    lookup returns [`naust_storage_core::ReadError::NotFound`].
 ///
 /// Any other failure on primary immediately returns without attempting quarantine.
 /// Any failure on quarantine returns immediately without further lookup.
@@ -222,7 +228,7 @@ pub(crate) async fn head_blob_seam(
 /// Once acquired, stream read failures are surfaced directly as [`std::io::Error`] during polling,
 /// without triggering re-acquisition or fallback.
 pub(crate) async fn open_blob_seam(
-    reader: &(impl storage_core::ObjectPayloadReader + ?Sized),
+    reader: &(impl naust_storage_core::ObjectPayloadReader + ?Sized),
     digest: &Digest,
 ) -> Result<(BlobMeta, Pin<Box<dyn AsyncRead + Send>>), StorageError> {
     let primary_key = blob_primary_key(digest)?;
@@ -232,7 +238,7 @@ pub(crate) async fn open_blob_seam(
             let (meta, stream) = payload.into_parts();
             Ok((BlobMeta { size: meta.size() }, stream))
         }
-        Err(storage_core::ReadError::NotFound { .. }) => {
+        Err(naust_storage_core::ReadError::NotFound { .. }) => {
             let quarantine_key = blob_quarantine_key(digest)?;
 
             match reader.open_payload(&quarantine_key).await {
@@ -240,7 +246,7 @@ pub(crate) async fn open_blob_seam(
                     let (meta, stream) = payload.into_parts();
                     Ok((BlobMeta { size: meta.size() }, stream))
                 }
-                Err(storage_core::ReadError::NotFound { .. }) => Err(StorageError::NotFound),
+                Err(naust_storage_core::ReadError::NotFound { .. }) => Err(StorageError::NotFound),
                 Err(other) => Err(translate_payload_read_error(other)),
             }
         }
@@ -249,7 +255,7 @@ pub(crate) async fn open_blob_seam(
 }
 
 pub(crate) async fn open_blob_range_seam(
-    reader: &(impl storage_core::ObjectPayloadReader + ?Sized),
+    reader: &(impl naust_storage_core::ObjectPayloadReader + ?Sized),
     digest: &Digest,
     start: u64,
     end_inclusive: u64,
@@ -265,7 +271,7 @@ pub(crate) async fn open_blob_range_seam(
             let (meta, stream) = payload.into_parts();
             Ok((BlobMeta { size: meta.size() }, stream))
         }
-        Err(storage_core::ReadError::NotFound { .. }) => {
+        Err(naust_storage_core::ReadError::NotFound { .. }) => {
             let quarantine_key = blob_quarantine_key(digest)?;
             match reader
                 .open_payload_range(&quarantine_key, start, length)
@@ -275,7 +281,7 @@ pub(crate) async fn open_blob_range_seam(
                     let (meta, stream) = payload.into_parts();
                     Ok((BlobMeta { size: meta.size() }, stream))
                 }
-                Err(storage_core::ReadError::NotFound { .. }) => Err(StorageError::NotFound),
+                Err(naust_storage_core::ReadError::NotFound { .. }) => Err(StorageError::NotFound),
                 Err(other) => Err(translate_payload_read_error(other)),
             }
         }
@@ -285,8 +291,8 @@ pub(crate) async fn open_blob_range_seam(
 
 /// Registry-owned filesystem CAS blob read adapter wrapping a unified reader into [`BlobCasReader`].
 ///
-/// Accepts an already-constructed reader `R` implementing both [`storage_core::ObjectMetadataReader`]
-/// and [`storage_core::ObjectPayloadReader`].
+/// Accepts an already-constructed reader `R` implementing both [`naust_storage_core::ObjectMetadataReader`]
+/// and [`naust_storage_core::ObjectPayloadReader`].
 #[derive(Debug)]
 pub struct FsBlobCasReadAdapter<R: ?Sized> {
     reader: Arc<R>,
@@ -309,8 +315,8 @@ impl<R: ?Sized> FsBlobCasReadAdapter<R> {
 #[async_trait]
 impl<R> BlobCasReader for FsBlobCasReadAdapter<R>
 where
-    R: storage_core::ObjectMetadataReader
-        + storage_core::ObjectPayloadReader
+    R: naust_storage_core::ObjectMetadataReader
+        + naust_storage_core::ObjectPayloadReader
         + Send
         + Sync
         + ?Sized
@@ -340,11 +346,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{HashMap, VecDeque};
-    use std::sync::Mutex;
-    use storage_core::{
+    use naust_storage_core::{
         ObjectKey, ObjectMetadata, ObjectPayload, ObjectPayloadReader, ObjectStream, ReadError,
     };
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::Mutex;
     use tokio::io::AsyncReadExt;
 
     struct UnifiedRecordingFakeReader {
@@ -393,7 +399,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl storage_core::ObjectMetadataReader for UnifiedRecordingFakeReader {
+    impl naust_storage_core::ObjectMetadataReader for UnifiedRecordingFakeReader {
         async fn head(&self, key: &ObjectKey) -> Result<ObjectMetadata, ReadError> {
             self.meta_calls.lock().unwrap().push(key.clone());
             let mut responses = self.meta_responses.lock().unwrap();
@@ -541,7 +547,8 @@ mod tests {
         let content = b"real linux fs content via FsBlobCasReadAdapter";
         std::fs::write(&full_path, content).expect("write blob file");
 
-        let reader = Arc::new(storage_fs::FsMetadataReader::open(&root).expect("open root reader"));
+        let reader =
+            Arc::new(naust_storage_fs::FsMetadataReader::open(&root).expect("open root reader"));
         let adapter = FsBlobCasReadAdapter::new(reader.clone());
 
         // Verify head_blob via BlobCasReader
