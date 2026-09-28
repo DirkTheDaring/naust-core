@@ -14,8 +14,10 @@ jobs:
           components: rustfmt
       - name: Stage sibling path dependency
         run: |
-          git clone --depth 1 https://github.com/DirkTheDaring/storage-layer-rust ../storage-layer-rust
           git clone --depth 1 https://github.com/DirkTheDaring/naust-types ../naust-types
+          git clone --depth 1 https://github.com/DirkTheDaring/naust-storage-core ../naust-storage-core
+          git clone --depth 1 https://github.com/DirkTheDaring/naust-storage-fs ../naust-storage-fs
+          git clone --depth 1 https://github.com/DirkTheDaring/naust-storage-s3 ../naust-storage-s3
       - name: Format
         run: cargo fmt --check
       - name: Tests
